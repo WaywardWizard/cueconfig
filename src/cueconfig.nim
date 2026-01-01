@@ -61,7 +61,7 @@ template loadConfigLogic(executor: proc(s: string): (string, int)): string =
   if code != 0:
     raise newException(
       IOError,
-      "Failed to load config file {cfg}, cue export exited with code " & $code,
+      "Failed to load config file $#, cue export exited with code $#" % [cfg,$code]
     )
   output
 
@@ -72,7 +72,6 @@ func cueExportCmd(path: string): string =
 proc fileToJsonStatic(path: string): (string,int) =
   ## Load cue file contents at compile time, fallback to json file of same name
   ## if cue not found.
-  var output:string
   if NO_CUE or not staticFileExists path:
     let jpath = $Path(path).changeFileExt(".json")
     if staticFileExists jpath: (staticRead jpath, 0)
@@ -141,12 +140,11 @@ template cfg(): Config =
   when nimvm: ctConfig else: config
 
 proc loadEnvVars(): void =
-  ## Load environment variables into config
+  ## Load runtime environment variables into config
   ## Key and value case conserved
   var
     rawEnv: seq[string]
     json: JsonNode = newJObject()
-    cfgtable = cfg().configurations
   for k,v in envPairs():
     let kLow = k.toLowerAscii
     if kLow.startsWith("nim_"):
@@ -188,6 +186,7 @@ when not defined(js):
     for cfg in foundCfgs:
       var jsonstring = loadConfigLogic(fileToJson)
       if jsonstring != "":
+        # runtime config , cfg() is not needed here
         config.add(cfg, jsonstring)
 
     # Load env vars, available in c, and nodejs but not browser js
@@ -201,16 +200,19 @@ when not defined(js):
     loadConfig(cfgs.mapIt($it))
 
 proc getConfigNodeImpl(key: openarray[string]): JsonNode {.raises: [ValueError].} =
-  for mname, (jstr, jnode) in config.pairs(true): # `pairs(Config)`_
+  # Compiletime Config if run from nimvm, for access to config at compiletime
+  var ctOrRtConfig: Config
+  when nimvm:
+    ctOrRtConfig = ctConfig
+  else:
+    ctOrRtConfig = config
+  for mname, (jstr, jnode) in ctOrRtConfig.pairs(true): # `pairs(Config)`_
     if jnode.contains(key): # differentiates jsnode{key}=null vs no key
       return jnode{key}
   raise newException(ValueError, &"Key '{key}' not found in configuration")
-
-proc getConfigNode*(key: string): JsonNode {.inline,raises: [ValueError].} =
-  ## Return config value for dot notation key
-  return getConfigNodeImpl(key.split('.'))
-
-proc getConfigNode*(key: openarray[string]|varargs[string]): JsonNode {.inline.} = return getConfigNodeImpl(key)
+  
+template getConfigNode*(key: string):JsonNode= getConfigNodeImpl(key.split('.'))
+template getConfigNode*(key: varargs[string]): JsonNode = getConfigNodeImpl(key)
 
 # proc getConfig*( # type as second arg avoid overload ambiguity with getConfig
 #     key: string|openarray[string], T: typedesc
@@ -222,10 +224,10 @@ proc getConfig*(): OrderedTable[string, (string, JsonNode)] =
   ## Get config map
   cfg().configurations
 
-# Note large floats are parsed to strings (not floats) by std/json `parseJson` 
+# Note large floats are parsed to strings (not floats) by std/json `parseJson`
 # to preserve precision. `to[J](JsonNode, string)` will only cast a nan, and
 # +/-inf strings to float. This template intercepts and casts appropriately.
-proc getConfig*[T](key: string|openArray[string]): T =
+proc getConfig*[T](key: string): T =
   var node = getConfigNode(key)
   if node.kind == JString:
     when T is SomeInteger: return parseInt(node.getStr())
@@ -233,13 +235,7 @@ proc getConfig*[T](key: string|openArray[string]): T =
     else: discard
   return node.to(T)
 
-proc getConfig*[T](key: varargs[string]): T =
-  var node = getConfigNode(key)
-  if node.kind == JString:
-    when T is SomeInteger: return parseInt(node.getStr())
-    elif T is SomeFloat: return parseFloat(node.getStr())
-    else: discard
-  return node.to(T)
+template getConfig*[T](key:varargs[string]): T = getConfig[T](key.join("."))
 
 proc showConfig*():string = $config
 

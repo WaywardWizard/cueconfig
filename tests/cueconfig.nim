@@ -14,7 +14,13 @@ proc injectEnv(env: string) =
     if parts.len == 2:
       putEnv(parts[0].strip, parts[1])
 
-suite "Read static configuration":
+suite "Read static configuration (at compiletime)":
+  test "Compiletime get":
+    # will raise exception if fails
+    # const evaluated at conpiletime, so we are testing compile time access
+    const cfgNode = getConfig[string]("compiled.testString")
+
+suite "Read static configuration (at runtime)":
   test "Read compiled":
     check getConfigNode("compiled").kind == JObject
   test "Read string":
@@ -39,8 +45,13 @@ suite "Read static configuration":
     check getConfig[bool](@["app", "nested", "flag"])
   test "Read object":
     check getConfigNode("app.nested").kind == JObject
+suite "API":
+  check getConfig[bool]("app.nested.flag") == true
+  check getConfig[bool](["app","nested","flag"]) == true
+  check getConfig[bool](@["app","nested","flag"]) == true
+  check getConfig[bool]("app","nested","flag") == true
   
-when not defined(js):
+when not defined(js): # filesystem access required
   const binCfg = Path("tests/bin/config.cue") # see --outdir flag in nimble file
   const pwdCfg = Path("config.cue")
   const binCfgBk = binCfg.changeFileExt("cue.bak")
