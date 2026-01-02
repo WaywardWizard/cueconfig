@@ -55,7 +55,7 @@ backend: {
 }
 ```
 Access with
-*   `getConfig(key: string|openArray[string]|varargs[string]): string`: Retrieves a configuration value by key (dot notation|array/varargs of keys).
+*   `getConfig[T](key: string|openArray[string]|varargs[string]): T`: Retrieves a configuration value by key (dot notation|array/varargs of keys).
 *   `reload()`: Reloads the runtime configuration and environment variables. Useful for long-running applications or testing.
 *   `showConfig()`: Returns a string representation of the currently loaded configuration.
 
