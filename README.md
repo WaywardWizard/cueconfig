@@ -17,6 +17,7 @@ Enable DRY, deterministic, schema-able, validifiable and scriptable configuratio
 *   **Live Reloading**: Supports reloading configuration at runtime (trigger with reload())
 *   **Type Safety**: Provides a generic `getConfig[T]` procedure to retrieve typed configuration values.
 *   **JS Backend Support**: Use compiled in config in JS backend and additionally environment variable overrides in Node.js. Filesystem access limitations mean runtime configuration file use is not supported.
+*   
 
 ## Installation
 Then, install the `cueconfig` package using Nimble:
@@ -81,6 +82,13 @@ Environment variables can override any configuration value. The matching logic i
 2.  Separator: `_` (underscore) denotes nested keys.
 3.  Case Sensitivity: The keys themselves are case-sensitive.
 
+### Special Case: Top-Level JSON Object
+If you use secret management, a simple way of injecting your secrets to the
+config is to yield a json string containing all secrets and assign that to a
+single `nim_` environment variable. This json object will be merged into the
+config according to the precedence rules. Do this with a `nim_` environment
+variable (note the trailing underscore) set with /usr/bin/env.
+
 **Examples:**
 
 *   `NIM_SERVER_PORT=9090` overrides `server.port`.
@@ -88,6 +96,7 @@ Environment variables can override any configuration value. The matching logic i
 *   `nim_app_settings_theme=dark` overrides `app.settings.theme`.
 *   `nim_array=[1,2,-.3204e-13]` heterogeneous json array (cast to homogenous nim container)
 *   `nim_object={"key1":"value1","key2":2}` json object 
+*   `nim_={"key1":"value1","key2":2}` special case keys to top level json object 
 
 Equivalent cue:
 ```cue

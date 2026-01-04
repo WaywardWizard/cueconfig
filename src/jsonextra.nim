@@ -26,6 +26,23 @@ iterator cartesianProduct[T:Catenatable](a,b: openArray[T], op:proc(x,y:T):T): T
 iterator cartesianProduct[T:Catenatable](a,b: openArray[T]): T =
   for x in cartesianProduct(a,b,proc(x,y:T):T = x & y): yield x
     
+proc mergeIn*(dest, src: JsonNode): void =
+  ## Merge src into dest, overwriting any existing keys in dest
+  ## When an object value is found in src, and the corresponding key in dest is 
+  ## also an object, the merge is done recursively retaining exclusive keys in 
+  ## dest, clobbering common keys with those from src and adding exclusive keys 
+  ## from src.
+  ## When an array value is found in src, any corresponding key in dest is 
+  ## overwritten with the array from src.
+  for k,v in src:
+    case v.kind
+    of JObject:
+      if dest.contains(k) and dest[k].kind == JObject:
+        mergeIn(dest[k], v)
+      else:
+        dest[k] = v
+    else:
+      dest[k] = v
 
 proc parse*(x:string): JsonNode =
   ## Change string to JsonNode interpreting the following format;
@@ -36,6 +53,7 @@ proc parse*(x:string): JsonNode =
   ##  true|false       -> boolean
   ##  null             -> null
   ##  otherwise        -> string
+  ## ^{.*}$            -> json string
   ## 
   ## Numbers may contains underscores for readability which are ignored
   ## Objects must be valid json
@@ -44,8 +62,9 @@ proc parse*(x:string): JsonNode =
   if s.len == 0:  return newJString("")
   if sLower == "null": return newJNull()
   if sLower in ["true", "false"]: return newJBool(sLower == "true")
-  # take out sign only strings so not interpreted as int
+  # take out sign only strings so not interpreted as int without number
   if sLower in ["+","-"]:  return newJString(s)
+    
   if sLower[0] == '[' and sLower[^1] == ']': # Array
     result = newJArray()
     for element in s[1..^2].split(','): result.add(parse(element))
@@ -59,12 +78,13 @@ proc parse*(x:string): JsonNode =
       case sLower.count('.')
       of 0: return newJInt(parseInt(s.replace("_")))
       of 1: return newJFloat(parseFloat(s.replace("_")))
-      else: discard # try as object or string
+      else: discard # continue and try as object or string
         
   if sLower[0] == '{' and sLower[^1] == '}': # Object (we trimmed whitespace)
     when defined(js): # JS backends std/json does not support raw numbers
       return parseJson(s)
     else:
-      return parseJson(s,rawIntegers=true, rawFloats=true)
+      # raw*=false will convert to JInt/JFloat instead of JString for numbers
+      return parseJson(s,rawIntegers=false, rawFloats=false)
     
   return newJString(s)

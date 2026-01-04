@@ -4,9 +4,10 @@
 ## Load configuration from cue file(s) and environment variables.
 ##
 ## Environment variables are lifted from the runtime os environment with case
-## insensitive prefix NIM_, the case sensitive json path split on _. Environment variables
-## are merged into the configuraton with highest precedence. Values are
-## formatted per `parse`_
+## insensitive prefix NIM_, the case sensitive json path split on _.
+## 
+## Environment variables are merged into the configuraton with highest 
+## precedence. Values are formatted per `parse`_
 ##
 ## Configuration loaded from working directory, binary directory, or compile
 ## time the project directory. Precedence: working > binary > compile time
@@ -23,6 +24,7 @@ when not defined(js):
 else:
   import jsffi
   proc isNode*(): bool =
+    return defined(nodejs)
     {.emit: """
     return typeof process !== 'undefined' &&
     process.versions != null &&
@@ -44,9 +46,7 @@ const PRJCFG = PRJDIR / "config.cue" # compile
 # static:
 #   echo os.getCurrentDir()
 when nimvm:  # Compiletime.
-  # Assignment here only for nimvm compile time access.
-  const CTCFG = Path(staticExec("pwd") & "/config.cue") # std/paths unavilable
-  
+  discard
 else: # Runtime.
   when not defined(js): # js backend has no filesystem access
     let RUNDIR = paths.getCurrentDir() # directory from which the user has run the bin
@@ -118,8 +118,21 @@ iterator pairs(x:Config,reverse=false): (string,(string,JsonNode)) =
 #                          name,   json string
 const compileTimeConfig: seq[(string, string)] = block:
   
-  let cfgs = [$PRJCFG,$CTCFG].filterIt(staticFileExists(it) or staticFileExists($Path(it).changeFileExt(".json")))
+  let cfgs = [$PRJCFG].filterIt(staticFileExists(it) or staticFileExists($Path(it).changeFileExt(".json")))
   loadConfigStatic(cfgs)
+  
+## Feature: register() for specifying config files to loat
+# type
+#   ConfigMatcherKind = enum
+#     cmkPath, cmkRegex
+#   ConfigMatcher = object
+#     case discriminator: ConfigMatcherKind
+#     of cmkPath:
+#       path: Path
+#     of cmkRegex:
+#       regex: Regex
+    
+# var registeredConfig: seq[(string,string)] {.compileTime.} = @[]
 
 proc initConfig(): Config =
   ## Intialize configuration with compile time configs, runtime configs added later, order matters for precedence
@@ -150,17 +163,20 @@ proc loadEnvVars(): void =
     let kLow = k.toLowerAscii
     if kLow.startsWith("nim_"):
       rawEnv.add(k & "=" & v)
-      let path = k[4..^1].split('_')
-      var parent = json
-      for part in path[0..^2]:
-        if not parent.contains(part):
-          parent[part]=newJObject()
-        parent = parent[part]
-      parent[path[^1]]=v.parse()
+      if kLow == "nim_": # top level json object merge
+        var topLevelJson: JsonNode = v.parse()
+        json.mergeIn topLevelJson
+      else: # nested path
+        let path = k[4..^1].split('_')
+        var parent = json
+        for part in path[0..^2]:
+          if not parent.contains(part):
+            parent[part]=newJObject()
+          parent = parent[part]
+        parent[path[^1]]=v.parse()
   # Merge into config with highest precedence
   # last env var has highest precedence
   config.add("env",rawEnv.join("\n"), json)
-  #echo config
 
 when not defined(js):
   proc fileToJson(path: string): (string,int) =

@@ -18,7 +18,10 @@ suite "Read static configuration (at compiletime)":
   test "Compiletime get":
     # will raise exception if fails
     # const evaluated at conpiletime, so we are testing compile time access
-    const cfgNode = getConfig[string]("compiled.testString")
+    try:
+      const cfgNode = getConfig[string]("compiled.testString")
+    except:
+      fail()
   
 suite "Read static configuration (at runtime)":
   test "Read compiled":
@@ -40,16 +43,19 @@ suite "Read static configuration (at runtime)":
     check getConfig[float]("app.fnumber") == 3.14
   test "Read boolean":
     check getConfig[bool]("app.nested.flag") == true
-  test "Array keys":
     check getConfig[bool](["app", "nested", "flag"])
     check getConfig[bool](@["app", "nested", "flag"])
   test "Read object":
     check getConfigNode("app.nested").kind == JObject
 suite "API":
-  check getConfig[bool]("app.nested.flag") == true
-  check getConfig[bool](["app","nested","flag"]) == true
-  check getConfig[bool](@["app","nested","flag"]) == true
-  check getConfig[bool]("app","nested","flag") == true
+  test "Dot notation key":
+    check getConfig[bool]("app.nested.flag") == true
+  test "Array of strings key":
+    check getConfig[bool](["app","nested","flag"]) == true
+  test "Seq key":
+    check getConfig[bool](@["app","nested","flag"]) == true
+  test "Varargs key":
+    check getConfig[bool]("app","nested","flag") == true
   
 when not defined(js): # filesystem access required
   const binCfg = Path("tests/bin/config.cue") # see --outdir flag in nimble file
@@ -114,7 +120,7 @@ when not defined(js): # filesystem access required
       check getConfigNode("pwd").kind == JObject
     test "Read env configuration":
       check getConfigNode("env").kind == JObject
-    test "Precedence":
+    test "Precedence, reloading":
       check getConfig[int]("common.w") == 0 # from compile time
       check getConfig[int]("common.x") == 1 # from bindir
       check getConfig[int]("common.y") == 2 # from pwd
@@ -146,28 +152,50 @@ when not defined(js): # filesystem access required
       check getConfig[string]("fallback.string") == "Runtime Config"
       
 when defined(js):
-  if isNode():
-    suite "Env parsing":
-      setup:
-        const env = """
-        nim_env_sTr=stringValue
-        nim_env_inT=12345
-        nim_env_fLoat=3.14159
-        nim_env_array0=[one,two,three]
-        nim_env_array1=[1,2,3]
-        nim_env_array2=[1.1,1]
-        nim_env_array3=[1,1.1]
-        """
-        injectEnv(env)
-        reload()
-      test "Case sensitivity":
-        check getConfig[string]("env.sTr") == "stringValue"
-        check getConfig[int]("env.inT") == 12345
-        expect ValueError: discard getConfig[string]("env.str")
-      test "Arrays":
-        check getConfig[seq[string]]("env.array0") == @["one","two","three"]
-        check getConfig[seq[int]]("env.array1") == @[1,2,3]
-        check getConfig[seq[float]]("env.array2") == @[1.1,1.0]
-        # This will fail as mixed types not supported in nim, the JsonNode does
-        # check getConfig[seq[int]]("env.array3") == @[1,1]
-        
+  const testEnv = isNode()
+else:
+  const testEnv = true
+when testEnv:
+  suite "Env parsing":
+    setup:
+      const env = """
+      nim_env_sTr=stringValue
+      nim_env_inT=12345
+      nim_env_fLoat=3.14159
+      nim_env_array0=[one,two,three]
+      nim_env_array1=[1,2,3]
+      nim_env_array2=[1.1,1]
+      nim_env_array3=[1,1.1]
+      nim_env_obj={"old": 1,"key1":"value1","key2":2,"key3":3.0, "key4":true, "key5":null, "key6":[1,2,3],"key7":{"subkey":"subvalue"}}
+      nim_={"env": {"obj": {"old": 0}}, "topLevelKey": "topLevelValue"}
+      """
+      injectEnv(env)
+      reload()
+    test "Case sensitivity":
+      check getConfig[string]("env.sTr") == "stringValue"
+      check getConfig[int]("env.inT") == 12345
+      expect ValueError: discard getConfig[string]("env.str")
+    test "Arrays":
+      check getConfig[seq[string]]("env.array0") == @["one","two","three"]
+      check getConfig[seq[int]]("env.array1") == @[1,2,3]
+      check getConfig[seq[float]]("env.array2") == @[1.1,1.0]
+      # This will fail as mixed types not supported in nim, the JsonNode does
+      # check getConfig[seq[int]]("env.array3") == @[1,1]
+    test "Object":
+      let objNode = getConfigNode("env.obj")
+      check objNode["key1"].getStr() == "value1"
+      check objNode["key2"].getInt() == 2
+      check objNode["key3"].getFloat() == 3.0
+      check objNode["key4"].getBool() == true
+      check objNode["key5"].kind == JNull
+      check objNode["key6"].kind == JArray
+      check objNode["key7"].kind == JObject
+      check objNode["key7"]["subkey"].getStr() == "subvalue"
+    suite "Top level object env":
+      test "Object collision common key clobber":
+        check getConfig[int]("env.obj.old") == 0
+      test "Object collision old keys retained":
+        check getConfig[int]("env.obj.key2") == 2
+      test "Top level key":
+        check getConfig[string]("topLevelKey") == "topLevelValue"
+      
