@@ -1,6 +1,8 @@
 ## Copyright (c) 2025 Ben Tomlin
 ## Licensed under the MIT license
 ##
+## .. importdoc:: cueconfig/jsonextra.nim
+## 
 ## Load configuration from cue, json and sops file(s) as well as environment 
 ## variable(s). At compiletime or runtime. Save configuration loaded at 
 ## compiletime into the binary for use at runtime. Reload configuration at runtime
@@ -184,7 +186,7 @@ proc registerConfigFileSelector*(selectors: varargs[FileSelector]): void =
   ## compiletime. 
   ## 
   ## # Interpolation
-  ## Implemented by `iterator interpolatedItems(FileSelector)`_
+  ## Implemented by `interpolatedItems`_ 
   ## FileSelector.searchspace replaces any `{ENV}` or `{getCurrentDir()}`
   ## FileSelector.path replaces any `{ENV}` or `{getCurrentDir()}`
   ## 
@@ -210,7 +212,7 @@ proc registerConfigFileSelector*(selectors: varargs[FileSelector]): void =
   ## change event will become stale. Therefore a syntax for time of use resolution,
   ## like with environment variables, is provided. Time of use is when a config
   ## reload is done. 
-
+  
   ## # Environment
   ## Environment variables will always have their leading and trailing whitespace
   ## stripped. Any trailing "/" is stripped before use (you must add this).
@@ -250,12 +252,24 @@ proc registerConfigFileSelector*(selectors: varargs[FileSelector]): void =
   else:
     for selector in selectors: configRegistry.add(selector)
       
-proc registerConfigFileSelector*(paths: varargs[string]): void =
+proc registerConfigFileSelector*(paths: varargs[string], useJsonFallback=true): void =
   for p in paths:
-    registerConfigFileSelector(initFileSelector(Path(p)))
-proc registerConfigFileSelector*(patternSelectors:varargs[tuple[searchpath: string, regex: string]]): void =
-  for (sp, rx) in patternSelectors:
-    registerConfigFileSelector(initFileSelector(Path(sp), rx))
+    registerConfigFileSelector(initFileSelector(Path(p),useJsonFallback))
+proc registerConfigFileSelector*(
+  patternSelectors:varargs[tuple[
+    searchpath: string,
+    regex: string,
+    useJsonFallback=true]]
+): void =
+  for (sp, rx, useJsonFallback) in patternSelectors:
+    registerConfigFileSelector(initFileSelector(Path(sp), rx, useJsonFallback))
+    
+proc registerConfigFileSelector*(
+  pathSelectors: varargs[tuple[searchpath,regex: string]]
+): void =
+  ## Convenience fskRegex registration automatically fallback to json
+  for (searchpath,regex) in pathSelectors:
+    registerConfigFileSelector(initFileSelector(Path(searchpath), regex,true))
 
 proc deregisterConfigFileSelector*(selector: FileSelector): void =
   ## Deregister a previously registered config file selector so it is not loaded
@@ -424,6 +438,7 @@ proc loadRegisteredConfigFiles(): void =
     registry = configRegistry
   for s in configRegistry:
     for p in s.interpolatedItems(reverse = true): # iterates only files that exist
+      echo fmt"Loading config file: {p}"
       var jsrc = initJsonSource(p, s.useJsonFallback)
       case jsrc.discriminator
       of jsSops:
@@ -561,3 +576,21 @@ template getConfig*[T](key: varargs[string]): T =
 
 proc showConfig*(): string = ## Show current configuration as string
   $cfg()
+proc checksumConfig*(): int = hash($cfg())
+  ## Checksum config
+
+proc clearConfig*(): void =
+  ## Clear all runtime configuration and registered configuration
+  ##
+  ## Compiletime configuration is preserved.
+  when not defined(js): # no fs access in js
+    mcfg().rtCue = OrderedTable[string, JsonSource]()
+    mcfg().rtJson = OrderedTable[string, JsonSource]()
+    mcfg().rtSops = OrderedTable[string, JsonSource]()
+  mcfg().rtEnv = OrderedTable[string, JsonSource]()
+  when nimvm:
+    ctConfigRegistry = @[]
+    ctEnvRegistry = @[]
+  else:
+    configRegistry = @[]
+    envRegistry = @[]

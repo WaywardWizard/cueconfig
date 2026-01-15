@@ -41,10 +41,13 @@ proc initFileSelector*(searchspace: Path, pattern: string, useJsonFallback=true)
   ## Initialize a FileSelector from a searchspace path and regex pattern
   if pattern.len == 0:
     raise ValueError.newException("Pattern cannot be empty")
-  result.discriminator = fskRegex
-  result.searchspace = searchspace
-  result.patternStr = pattern
-  result.pattern = re(pattern)
+  FileSelector(
+    discriminator: fskRegex,
+    searchspace: searchspace,
+    patternStr: pattern,
+    pattern: re(pattern),
+    useJsonFallback: useJsonFallback,
+  )
 proc initFileSelector*(path: Path, useJsonFallback=true): FileSelector = 
   ## Initialize a FileSelector from a file path
   result.discriminator = fskPath
@@ -67,7 +70,7 @@ proc interpolate(s: FileSelector): FileSelector =
   ## 
   ## Replaces `{VAR}` in the pattern with the value of the environment.
   ## Replace `{getCurrentDir()}` with the current working directory.
-  result.discriminator = s.discriminator
+  result = s # copy
   var pathStr: string
   var cwd = os.getCurrentDir()
   
@@ -75,23 +78,25 @@ proc interpolate(s: FileSelector): FileSelector =
   case s.discriminator
   of fskPath:
     pathStr = $s.path
-    pathStr = pathStr.replace("{getCurrentDir()}", cwd)
   of fskRegex:
-    pathStr = $s.patternStr
-    pathStr = pathStr.replace("{getCurrentDir()}", cwd)
+    pathStr = $s.searchspace
+  pathStr = pathStr.replace("{getCurrentDir()}", cwd)
   
   # env
   let matcher = re(r"\{([A-Za-z0-9_]+)\}")
   var matches: array[1,string]
   while match(pathStr, matcher, matches):
-    pathStr = pathStr.replace("{" & matches[0] & "}", getEnv(matches[0]))
+    let envval = getEnv(matches[0])
+    if envval == "":
+      raise ValueError.newException(&"Interplation env var {matches[0]} is empty")
+    pathStr = pathStr.replace("{" & matches[0] & "}", envval)
       
+  # update path
   case s.discriminator
   of fskPath:
     result.path = pathStr.Path
   of fskRegex:
-    result.searchspace = s.searchspace
-    result.patternStr = s.patternStr
+    result.searchspace = pathStr.Path
   
 proc load(x:JsonSource): tuple[jsonStr:string,json:JsonNode]
 proc initJsonSource*(path: Path, useJsonFallback=false): JsonSource = 
@@ -101,9 +106,9 @@ proc initJsonSource*(path: Path, useJsonFallback=false): JsonSource =
   ## Where cue/sops binaries are missing or the path does not exist and a fallback
   ## is not possible raise an exception.
   ## 
-  ## .*\.sops\.(yaml|json) => jsSops
-  ## .*\.cue               => jsCue
-  ## .*\.json              => jsJson
+  ## `.*\.sops\.(yaml|json)` => jsSops
+  ## `.*\.cue`               => jsCue
+  ## `.*\.json`              => jsJson
   let pathSplit = ($path).split(".")
   var discriminant: JsonSourceKind
   if pathSplit.len >= 2 and pathSplit[^2].toLowerAscii() == "sops":
@@ -267,7 +272,14 @@ proc load(x:JsonSource): tuple[jsonStr:string,json:JsonNode] =
     var jsonStr: string
     when nimvm: jsonStr= staticRead($x.path)
     else: jsonStr= readFile($x.path)
-    (jsonStr, parseJson(jsonStr))
+    var json = try: 
+      parseJson(jsonStr)
+    except JsonParsingError as e:
+      raise newException(
+        ValueError,
+        &"JSON parsing error for file {x.path};\n{e.msg}",
+      )
+    (jsonStr, json)
   of jsCue:
     if NO_CUE: raise ValueError.newException("No cue binary available")
     var cmd: tuple[output:string, exitCode:int]

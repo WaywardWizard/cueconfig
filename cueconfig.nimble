@@ -2,7 +2,7 @@
 ## Licensed under the MIT license
 
 # Package
-version       = "1.3.0"
+version       = "2.0.0"
 author        = "Ben Tomlin"
 description   = "Cue configuration with JSON fallback for Nim projects"
 license       = "MIT"
@@ -36,3 +36,32 @@ task test, "Run tests":
   echo "Running browser js tests..."
   for file in recListFiles("tests", "nim"):
     exec "nim -b:js --outdir:tests/bin js -r " & file
+
+const DOCFOLDER = "docs"
+import std/[strformat,sequtils]
+task docgen, "Generate documentation":
+  echo "Generating documentation..."
+  exec &"rm -rf {DOCFOLDER}/*"
+  # --outdir is bugged, only works immediately before doc command...
+  var cmd = &"""
+    nim \
+      --colors:on \
+      --path:$projectDir \
+      --docInternal \
+      --project \
+      --index:on \
+      --outdir:{DOCFOLDER} \
+      doc \
+        src/cueconfig.nim
+  """
+  var result = gorgeEx cmd
+  if result.exitCode != 0:
+    echo "Documentation generation had some errors;"
+    # lines with "Error" in them
+    echo ""
+    echo result.output.splitLines().filterIt(it.contains "Error").join("\n")
+    quit(result.exitCode)
+
+task build, "Build the library":
+  echo "Building library..."
+  exec "nim c src/cueconfig.nim"
