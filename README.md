@@ -127,6 +127,9 @@ MIT
 ## Tests
 `nimble test`
 
+## Cautions
+Be aware of what configuration in compiled into your binary. Particularly secret materials.
+
 ## Development AI Usage
 AI has been used for dumb code completion, debugging and some documentation. The
 logic and architecture is handwritten.
