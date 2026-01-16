@@ -1,32 +1,20 @@
 import std/[paths, macros, os]
 when nimvm:
   import std/[staticos]
+  import system/nimscript
   
-# Cue/sops installed
-let NO_CUE*: bool = block:
-  when not defined(js):
-    findExe("cue") == ""
-  else:
-    true
-let NO_SOPS*: bool = block:
-  when not defined(js):
-    findExe("sops") == ""
-  else:
-    true
 
 proc `/`*(a: Path, b: string): Path =
   result = a
   result.add(b.Path)
+
 proc `/`*(a: string, b: Path): Path =
   result = a.Path
   result.add(b)
 
 proc extant*(p: Path): bool =
-  when nimvm: 
-    staticFileExists($p)
-  else:
-    fileExists($p)
-    
+  os.fileExists($p)
+
 macro getField*(obj: typed, field: string, T: typedesc): untyped =
   ## Get field of object dynamically, where field value is of type T
   obj.expectKind({nnkSym, nnkRefTy, nnkObjectTy})
@@ -49,3 +37,10 @@ macro getField*(obj: typed, field: string, T: typedesc): untyped =
       )
   ifexpr.add(nnkElseExpr.newTree(newStmtList(throw)))
   result = ifexpr
+
+proc getCurrentDir*(): string =
+  ## Get current working directory as Path, supporting both compile-time and run-time
+  when nimvm:
+    result = nimscript.getCurrentDir()
+  else:
+    result = os.getCurrentDir()

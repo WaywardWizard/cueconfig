@@ -1,1 +1,2 @@
 conflict: "A"
+onlyInA: "A"

@@ -2,23 +2,23 @@
 ## Licensed under the MIT license
 ##
 ## .. importdoc:: cueconfig/jsonextra.nim
-## 
-## Load configuration from cue, json and sops file(s) as well as environment 
-## variable(s). At compiletime or runtime. Save configuration loaded at 
+##
+## Load configuration from cue, json and sops file(s) as well as environment
+## variable(s). At compiletime or runtime. Save configuration loaded at
 ## compiletime into the binary for use at runtime. Reload configuration at runtime
 ## is needed.
-## 
+##
 ## [Cue](https://cuelang.org)
 ## [SOPS](https://github.com/getsops/sops)
-## 
+##
 ## Configuration sources follow well defined precedence. All configuration merges
 ## to master json document. Precedent sources will shadow lower precedence
-## sources where keys overlap. 
-## 
+## sources where keys overlap.
+##
 ## # Environment Variables
 ## Environment variables are lifted from the runtime os environment.
 ## * All vars with matching user specified prefix(es) are used
-## * The case sensitive json path is derived from the sans prefix variable name 
+## * The case sensitive json path is derived from the sans prefix variable name
 ##   split on _.
 ## * Environment variables are merged into the configuraton with highest precedence.
 ## * Homogeneous arrays, any JSON string, and primitive types supported.
@@ -41,22 +41,25 @@
 ##
 ## # JS
 ## Compilation for the javascript backend is supported. Only compiletime config.
-## 
+##
 ## # Overall flow;
 ## ## Composing Runtime Config (nimvm, or backend)
 ## 1. FileSelector is registered
 ## 2. `loadRegisteredConfig`_ or `loadRegisteredConfigFiles`_ turns selectors to
 ##    JsonSource and adds them to the config singleton.
-## 
-import std/[times, json, staticos, paths, tables, strformat, macros, strutils,
-  sequtils,sets]
+##
+import
+  std/[
+    times, json, paths, tables, strformat, macros, strutils, sequtils, sets,
+    algorithm,
+  ]
 #import std/[time,json, staticos, paths, tables, strformat, macros, strutils]
 import cueconfig/[jsonextra, util]
 
 when not defined(js):
   import
-    std/[os, osproc, hashes, re] # these wont compile with js backend or are unneeded
-# 
+    std/[os, hashes] # these wont compile with js backend or are unneeded
+#
 type Config = object
   # path: (json string, json node)
   # tables keyed on a label
@@ -76,22 +79,28 @@ type Config = object
   rtEnv: OrderedTable[string, JsonSource]
 
   # these strings must match fieldnames above, precedence low to high
-  precedenceClass = ["ctJson", "ctCue", "ctSops", "ctEnv", "rtJson", "rtCue", "rtSops", "rtEnv"]
+  precedenceClass =
+    ["ctJson", "ctCue", "ctSops", "ctEnv", "rtJson", "rtCue", "rtSops", "rtEnv"]
 
 iterator classes(x: Config, reverse = false): OrderedTable[string, JsonSource] =
-  ## iterate json source tables in high to low precedence order
+  ## iterate json source tables in low to high precedence order
+  ## reverse=false: low to high precedence order
+  ## reverse=true: high to low precedence order
   for ix in 0 ..< x.precedenceClass.len:
     let className =
       if reverse:
-        x.precedenceClass[ix]
+        x.precedenceClass[^(1 + ix)]
       else:
-        x.precedenceClass[^(1+ix)]
+        x.precedenceClass[ix]
     let table: OrderedTable[string, JsonSource] =
       x.getField(className, OrderedTable[string, JsonSource])
     yield table
 
 iterator pairs(x: Config, reverse = false): tuple[label: string, jsrc: JsonSource] =
-  ## iterate json sources in high to low precedence order
+  ## iterate json sources in precedence order, low to high
+  ## reverse=false: low to high precedence order (and first to last added for env)
+  ## reverse=true: high to low precedence order (and last to first added for env)
+  ## have in the tables of the config object
   for table in x.classes(reverse):
     #standard iterator yields in insertion order, this is backwards
     let keys = table.keys.toSeq()
@@ -101,14 +110,16 @@ iterator pairs(x: Config, reverse = false): tuple[label: string, jsrc: JsonSourc
     for ix in 1 .. keys.len:
       label =
         if reverse:
-          keys[(ix - 1)]
-        else:
           keys[^ix]
+        else:
+          keys[(ix - 1)]
       jsrc = table[label]
       yield (label, jsrc)
 
 iterator items(x: Config, reverse = false): JsonSource =
-  ## iterate json sources in precedence order, high to low
+  ## iterate json sources in precedence order, low to high
+  ## reverse=false: low to high precedence order (and first to last added for env)
+  ## reverse=true: high to low precedence order (and last to first added for env)
   for (_, jsrc) in x.pairs(reverse):
     yield jsrc # # precedence high to low: RUN, BIN, PRJ
 
@@ -151,7 +162,7 @@ proc `$`*(x: Config): string =
     tmp.add('-'.repeat(80) & "\n")
   return tmp.join("\n")
 
-proc sources*(x: Config): seq[string] =
+proc sources(x: Config): seq[string] =
   ## Get list of loaded config sources
   for s in x:
     result.add $s
@@ -183,36 +194,36 @@ var ctConfigRegistry {.compiletime.}: seq[FileSelector] = @[]
 
 proc registerConfigFileSelector*(selectors: varargs[FileSelector]): void =
   ## Register config file path or pattern to be located and loaded at runtime or
-  ## compiletime. 
-  ## 
+  ## compiletime.
+  ##
   ## # Interpolation
-  ## Implemented by `interpolatedItems`_ 
+  ## Implemented by `interpolatedItems`_
   ## FileSelector.searchspace replaces any `{ENV}` or `{getCurrentDir()}`
   ## FileSelector.path replaces any `{ENV}` or `{getCurrentDir()}`
-  ## 
+  ##
   ## # Relative Paths
   ## Alternatively, FileSelector.path or searchspace may be relative, making the
-  ## `{getCurrentDir()}` prefix implicit. 
-  ## 
+  ## `{getCurrentDir()}` prefix implicit.
+  ##
   ## # Extensions
   ## The extension must be .cue or .json, .sops.
-  ## 
+  ##
   ## # Extra detail
   ## ## Environment
-  ## Environment variables may be used, specify as `{ENVVAR}`, and it will be 
+  ## Environment variables may be used, specify as `{ENVVAR}`, and it will be
   ## interpolated at the time of use. If the value changes at runtime
   ## then a reload will pick up the new value and it wont be necessary
   ## to deregister the stale and reregister the new selector as it would be if
   ## the env variable were filled in caller side and thus fixed.
-  ## 
+  ##
   ## ## Paths
   ## You may want to use `getCurrentDir`_ or `getAppDir`_ to build your paths for
-  ## a selector. getAppDir() is fixed and may be evaluated caller side. As 
-  ## `setCurrentDir`_ may be used, any path determined callerside prior to this 
+  ## a selector. getAppDir() is fixed and may be evaluated caller side. As
+  ## `setCurrentDir`_ may be used, any path determined callerside prior to this
   ## change event will become stale. Therefore a syntax for time of use resolution,
   ## like with environment variables, is provided. Time of use is when a config
-  ## reload is done. 
-  
+  ## reload is done.
+  ##
   ## # Environment
   ## Environment variables will always have their leading and trailing whitespace
   ## stripped. Any trailing "/" is stripped before use (you must add this).
@@ -246,30 +257,35 @@ proc registerConfigFileSelector*(selectors: varargs[FileSelector]): void =
     # And remove it from the current configuration
     loadRegisteredConfig()
 
-    
   when nimvm:
-    for selector in selectors: ctConfigRegistry.add(selector)
+    for selector in selectors:
+      ctConfigRegistry.add(selector)
   else:
-    for selector in selectors: configRegistry.add(selector)
-      
-proc registerConfigFileSelector*(paths: varargs[string], useJsonFallback=true): void =
+    for selector in selectors:
+      configRegistry.add(selector)
+
+proc registerConfigFileSelector*(pselector: varargs[Path]): void =
+  ## Convenience fskPath registration automatically fallback to json
+  for p in pselector:
+    registerConfigFileSelector(initFileSelector(p))
+
+proc registerConfigFileSelector*(paths: varargs[string], useJsonFallback = true): void =
   for p in paths:
-    registerConfigFileSelector(initFileSelector(Path(p),useJsonFallback))
+    registerConfigFileSelector(initFileSelector(Path(p), useJsonFallback))
+
 proc registerConfigFileSelector*(
-  patternSelectors:varargs[tuple[
-    searchpath: string,
-    regex: string,
-    useJsonFallback=true]]
+    patternSelectors:
+      varargs[tuple[searchpath: string, regex: string, useJsonFallback = true]]
 ): void =
   for (sp, rx, useJsonFallback) in patternSelectors:
     registerConfigFileSelector(initFileSelector(Path(sp), rx, useJsonFallback))
-    
+
 proc registerConfigFileSelector*(
-  pathSelectors: varargs[tuple[searchpath,regex: string]]
+    rxselectors: varargs[tuple[searchpath, regex: string]]
 ): void =
   ## Convenience fskRegex registration automatically fallback to json
-  for (searchpath,regex) in pathSelectors:
-    registerConfigFileSelector(initFileSelector(Path(searchpath), regex,true))
+  for (searchpath, regex) in rxselectors:
+    registerConfigFileSelector(initFileSelector(Path(searchpath), regex, true))
 
 proc deregisterConfigFileSelector*(selector: FileSelector): void =
   ## Deregister a previously registered config file selector so it is not loaded
@@ -331,7 +347,7 @@ template commitCompiletimeConfig*(): untyped =
   ##
   ## Subsequent registrations will not be included in the compiled binary but
   ## their config will be available at compiletime.
-  ## 
+  ##
   ## Workflow Saving Compiletime Config (nimvm only)
   ## 1. FileSelector is registered
   ## 2. Client calls `commitCompiletimeConfig`_,
@@ -359,7 +375,7 @@ proc initConfig(): Config =
   ##
   ## `loadRegisteredConfig`_ may not be called yet as this proc is required to
   ## define `config`_.
-  result=Config() # otherwise we dont get defaults for the type
+  result = Config() # otherwise we dont get defaults for the type
   when nimvm:
     discard
   else:
@@ -384,61 +400,64 @@ proc cfgRuntime(): var Config =
     configInitialized = true
     loadRegisteredConfig()
   configInstance
+
 when nimvm:
   proc cfgCompiletime(): var Config =
+    static: echo "HERE"
     if not ctConfigInitialized:
       ctConfigInstance = initConfig()
       ctConfigInitialized = true
       loadRegisteredConfig()
     ctConfigInstance
+
 template mcfg(): var Config =
   ## Lazy access to Config singleton
   when nimvm:
     cfgCompiletime()
   else:
     cfgRuntime()
+
 template cfg(): lent Config =
   ## Readonly access to Config singleton
   mcfg()
 
 proc loadRegisteredConfigFiles(): void =
   ## Load all registered config files into config. Old configs removed
-  ## 
+  ##
   ## Json fallback is applied for missing cue files or cue binary. Where Json and
   ## cue files of the same name are found, the json source will be ignored unless
   ## the cue failed to load. Source deduplication will be performed.
-  ## 
+  ##
   ## # Fallback
-  ## Where cue files or binary are not available a json file matching the 
-  ## same selector (modified to match the json extension) will be used if 
-  ## possible. This fallback applies to fskPath and fskRegex. 
-  ## 
+  ## Where cue files or binary are not available a json file matching the
+  ## same selector (modified to match the json extension) will be used if
+  ## possible. This fallback applies to fskPath and fskRegex.
+  ##
   ## # Conflicts
-  ## Where both .cue and .json files are matched by selectors the .cue file 
-  ## will be used and the .json ignored. Aside from this case all matched files 
+  ## Where both .cue and .json files are matched by selectors the .cue file
+  ## will be used and the .json ignored. Aside from this case all matched files
   ## are loaded.
-  ## 
+  ##
   ## # Precedence
   ## First, precedence is on precedence class. For files in the same class
-  ## files deeper in the file hierarchy take precedence. Where multiple files 
-  ## exist at the same level file precedence is based on mtime, with latest 
-  ## modified taking precedence. Where mtime is not available or the same, 
-  ## lexicographical order of full path shall determine, higher in the sort 
+  ## files deeper in the file hierarchy take precedence. Where multiple files
+  ## exist at the same level file precedence is based on mtime, with latest
+  ## modified taking precedence. Where mtime is not available or the same,
+  ## lexicographical order of full path shall determine, higher in the sort
   ## order takes precedence.
-  ## 
+  ##
   ## This is implemented by the iteration order of `FileSelector.items()`_
-  ## 
+  ##
   ## If called at compiletime only use the content of `ctConfigRegistry` and
   ## `ctEnvRegistry`, not what may have been comitted by `commitCompiletimeConfig`_
-  var cueFiles,jsonFiles,sopsFiles: OrderedTable[string, JsonSource]
+  var cueFiles, jsonFiles, sopsFiles: OrderedTable[string, JsonSource]
   var registry: seq[FileSelector]
   when nimvm:
     registry = ctConfigRegistry
   else:
     registry = configRegistry
-  for s in configRegistry:
+  for s in registry:
     for p in s.interpolatedItems(reverse = true): # iterates only files that exist
-      echo fmt"Loading config file: {p}"
       var jsrc = initJsonSource(p, s.useJsonFallback)
       case jsrc.discriminator
       of jsSops:
@@ -449,18 +468,25 @@ proc loadRegisteredConfigFiles(): void =
         jsonFiles[$jsrc] = jsrc
       else:
         assert false, "Unexpected JsonSource discriminator"
-        
+
   # ignore json files where cue of same name exists (one source of truth)
-  var cuePaths, jsonPaths: HashSet[tuple[path:Path,key:string]]
-  for label, jsrc in cueFiles: 
+  var cuePaths, jsonPaths: HashSet[tuple[path: Path, key: string]]
+  for label, jsrc in cueFiles:
     cuePaths.incl((jsrc.path, $jsrc))
   for label, jsrc in jsonFiles:
     jsonPaths.incl((jsrc.path, $jsrc))
-  for (path,key) in cuePaths:
-    var collisions = jsonPaths.countit(it.path==path.changeFileExt("json"))
+  for (path, key) in cuePaths:
+    var collisions = jsonPaths.countit(it.path == path.changeFileExt("json"))
     if collisions > 0:
       jsonFiles.del(key)
-      
+
+  # sort ordered tables by precedence not insertion order, low to high to match
+  # the (c|r)tEnv tables which are ordered earliest to latest add, which is low
+  # to high precedence.
+  sopsFiles.sort(cmpFiles)
+  cueFiles.sort(cmpFiles)
+  jsonFiles.sort(cmpFiles)
+
   when nimvm:
     mcfg().ctCue = cueFiles
     mcfg().ctJson = jsonFiles
@@ -499,19 +525,19 @@ proc loadRegisteredConfig*(): void =
   ## Load all registered config files and env vars
   when not defined(js): # no fs access in js
     loadRegisteredConfigFiles()
-  
+
   when defined(js):
     # js backend, no fs access
-    when not isBrowser(): 
-      loadRegisteredEnvVars() 
+    when not isBrowser():
+      loadRegisteredEnvVars()
   else:
     loadRegisteredEnvVars()
 
-proc getConfigNodeImpl(key: openarray[string]): JsonNode  =
+proc getConfigNodeImpl(key: openarray[string]): JsonNode =
   ## Get config JsonNode at path `key` (split on '.'), respecting precedence
   ##
   ## Raise an exception if the requested key is not present.
-  for label, jsrc in cfg():
+  for label, jsrc in cfg().pairs(reverse = true): # high to low precedence
     if jsrc.contains(key): # differentiates jsnode{key}=null vs no key
       return jsrc{key}
   let sources: string = cfg().sources().join("\n\t")
@@ -576,8 +602,13 @@ template getConfig*[T](key: varargs[string]): T =
 
 proc showConfig*(): string = ## Show current configuration as string
   $cfg()
-proc checksumConfig*(): int = hash($cfg())
-  ## Checksum config
+
+proc showSources*(): string =
+  ## Show list of loaded config sources
+  result = cfg().sources().join("\n")
+
+proc checksumConfig*(): int = ## Checksum config
+  hash($cfg())
 
 proc clearConfig*(): void =
   ## Clear all runtime configuration and registered configuration

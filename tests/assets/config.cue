@@ -19,3 +19,4 @@ app: {
 	fnumber: 3.14
 }
 compiled: testString: "hello world"
+secret: "not"

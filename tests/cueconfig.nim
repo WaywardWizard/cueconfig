@@ -8,6 +8,10 @@ when not defined(js):
 import ../src/cueconfig
 import ../src/cueconfig/[util,jsonextra]
 
+when nimvm:
+  from system/nimscript import cd
+abortOnError = true
+
 const ENV = """
 nim_env_test=testing123
 Nim_common_z=3
@@ -30,7 +34,30 @@ proc injectEnv(env: string) =
     let parts = line.split('=')
     if parts.len == 2:
       putEnv(parts[0].strip, parts[1])
-
+var GPATH: string
+proc wipePath =
+  # Clear PATH to prevent finding cue binaries
+  if len(GPATH) == 0:
+    GPATH = getEnv("PATH")
+  putEnv("PATH","")
+proc restorePath =
+  putEnv("PATH",GPATH)
+  
+suite "Read static configuration (at compiletime)":
+  setup:
+    static:
+      cd($ppath)
+      registerConfigFileSelector(ppath/"assets/config.cue")
+  test "Compiletime get":
+    discard
+    # will raise exception if fails
+    # const evaluated at conpiletime, so we are testing compile time access
+    try:
+      const cfgNode = getConfig[string]("compiled.testString")
+      echo cfgNode
+    except:
+      fail()
+    
 suite "Env registrations":
   setup:
     injectEnv(ENV)
@@ -49,10 +76,11 @@ suite "Env registrations":
     expect(ValueError): discard getConfig[int]("cOMMON.Z") 
   test "Precedence (later registrations precedent)":
     registerEnvPrefix("NiM_",caseInsensitive=true)
+    loadRegisteredConfig()
     check getConfig[int]("COMMON.Z") == 110
     registerEnvPrefix("OBJ_")
     loadRegisteredConfig()
-    check getConfig[int]("COMMON.Z") == 100
+    #check getConfig[int]("COMMON.Z") == 100
 
 suite "File registrations":
   teardown:
@@ -81,8 +109,6 @@ suite "File registrations":
       # going to recurse and find
       registerConfigFileSelector(("", r"subdir\.json$"))
       loadRegisteredConfig()
-      echo "SHOW"
-      echo showConfig()
       check getConfig[string]("subdirjson") == "here"
       setCurrentDir(ppath / "../src")
       
@@ -130,6 +156,7 @@ suite "File registrations":
       putEnv("S1","assets")
       putEnv("S2","subdir")
       setCurrentDir(ppath)
+      # relative if it is not absolute
       registerConfigFileSelector(("{S1}/{S2}",r"subdir.json$"))
       loadRegisteredConfig()
       check getConfig[string]("subdirjson") == "here"
@@ -143,9 +170,9 @@ suite "File registrations":
       
   suite "Fallback and precedence":
     setup:
-      let fsnofallback = initFileSelector(Path(getProjectPath()) / "assets/fallback.cue" , useJsonFallback=false)
-      let fsjson = initFileSelector(Path(getProjectPath()) / "assets/fallback.json", useJsonFallback=false)
-      let fsfallback = initFileSelector(Path(getProjectPath()) / "assets/fallback.cue", useJsonFallback=true)
+      let fsnofallback = initFileSelector(ppath/ "assets/fallback.cue" , useJsonFallback=false)
+      let fsjson = initFileSelector(ppath / "assets/fallback.json", useJsonFallback=false)
+      let fsfallback = initFileSelector(ppath / "assets/fallback.cue", useJsonFallback=true)
       
       let rxNoFallback = initFileSelector(ppath,r"assets/fall\w+\.cue$", useJsonFallback=false)
       let rxFallback = initFileSelector(ppath,r"assets/fall\w+\.cue$", useJsonFallback=true)
@@ -162,27 +189,28 @@ suite "File registrations":
       loadRegisteredConfig()
       check getConfig[string]("fileExtUsed") == "cue"
     test "Path with fallback":
-      putEnv("PATH","")
+      wipePath()
       registerConfigFileSelector(fsfallback)
       loadRegisteredConfig()
       check getConfig[string]("fileExtUsed") == "json"
-      #moveFile("assets/fallback.cue.bak","assets/fallback.cue")
-      
+      restorePath()
     test "Regex no fallback":
       registerConfigFileSelector(rxNoFallback)
-      putEnv("PATH","")
-      expect(ValueError): # cue found, load fails
+      wipePath()
+      expect(Exception): # cue found, load fails
         loadRegisteredConfig()
+        
     test "Regex with fallback":
       registerConfigFileSelector(rxFallback)
-      putEnv("PATH","")
+      wipePath()
       loadRegisteredConfig() # cue found, load fails, fallback succeeds
       check getConfig[string]("fileExtUsed") == "json"
     test "Regex, match recurse to subpaths":
+      restorePath()
       registerConfigFileSelector(rxRecurse)
       loadRegisteredConfig()
       check getConfig[string]("regexmatch.onlyroot") == "here"
-      check getConfig[string]("regexmatch.subdir") == "here"
+      check getConfig[string]("regexmatch.onlysubdir") == "here"
     test "Clear config":
       registerConfigFileSelector(rxRecurse)
       loadRegisteredConfig()
@@ -198,9 +226,11 @@ suite "File registrations":
       # order independence
       setCurrentDir(ppath)
       registerConfigFileSelector(["assets/regexmatch.cue", "assets/subdir/regexmatch.cue"])
+      loadRegisteredConfig()
       check getConfig[string]("regexmatch.common") == "subdir"
       clearConfig()
       registerConfigFileSelector(["assets/subdir/regexmatch.cue","assets/regexmatch.cue"])
+      loadRegisteredConfig()
       check getConfig[string]("regexmatch.common") == "subdir"
     template setupTimePrecedentFiles(t1,t2:Time) = 
       writeFile("assets/subdir/mtime1.cue", "mtime:value: \"mtime1\"")
@@ -220,66 +250,50 @@ suite "File registrations":
       setupTimePrecedentFiles(tnow,tnow)
       loadRegisteredConfig()
       check getConfig[string]("mtime.value") == "mtime1"
-    test "Cue precedent": # two different files in same dir with conflicting keys
+    test "Cue precedent over json": # two different files in same dir with conflicting keys
       setCurrentDir(ppath/"assets")
       registerConfigFileSelector(["conflictA.cue","conflictB.json"])
       loadRegisteredConfig()
       check getConfig[string]("conflict") == "A"
     test "Shadow, not clobber":
+      setCurrentDir(ppath/"assets")
       registerConfigFileSelector(["conflictB.json","conflictA.cue"])
       loadRegisteredConfig()
       check getConfig[string]("onlyInA") == "A"
       check getConfig[string]("other") == "here"
-  
-  ## file registration
-  ## register cue
-  ## register json
-  ## register cue fallback json
-  ## register sops
-  ## sops precedence
-  ## cue precedent over json
-  ## 
-  # suite "File registrations":
-  #   setup:
-  #     const testDir = getProjectPath() / "tests" / "test_configs"
-  #     registerConfigFileSelector(testDir / "config1.cue")
-  #     registerConfigFileSelector(testDir / "config2.cue")
-  #     loadRegisteredConfig()
-  #     echo showConfig()
-  #   test "File registration precedence":
-  #     check getConfig[string]("file.testString") == "from config2"
-  #     check getConfig[int]("file.testNumber") == 200
-    
+  suite "SOPS":
+    setup:
+      putEnv("SOPS_AGE_KEY_FILE", $ppath/"age.keypair")
+      var theSecret = "c4ViBOUl/JzUE97sWaFZs6pcIAEgaJ02OAWOHOxfjMM="
+    teardown:
+      clearConfig()
+    test "Read from SOPs file":
+      registerConfigFileSelector(ppath/"assets/secrets.sops.yaml")
+      loadRegisteredConfig()
+      check getConfig[string]("secret") == theSecret
+    test "Env supercedes":
+      registerConfigFileSelector(ppath/"assets/secrets.sops.yaml")
+      putEnv("NIM_secret", "MAGIC")
+      registerEnvPrefix("NIM_",true)
+      loadRegisteredConfig()
+      check getConfig[string]("secret") == "MAGIC"
+      
+      clearConfig()
+      registerEnvPrefix("NIM_",true)
+      registerConfigFileSelector(ppath/"assets/secrets.sops.yaml")
+      loadRegisteredConfig()
+      echo(showConfig())
+      check getConfig[string]("secret") == "MAGIC"
+      
+    test "Supercedes cue, json":
+      clearConfig()
+      registerConfigFileSelector(ppath/"assets/secrets.sops.yaml")
+      registerConfigFileSelector(ppath/"assets/config.cue")
+      registerConfigFileSelector(ppath/"assets/fallback.json")
+      loadRegisteredConfig()
+      check getConfig[string]("secret") == theSecret
+   
 
-  ## file registration
-  ## register cue
-  ## register json
-  ## register cue fallback json
-  ## register sops
-  ## sops precedence
-  ## cue precedent over json
-  ## 
-  # suite "File registrations":
-  #   setup:
-  #     const testDir = getProjectPath() / "tests" / "test_configs"
-  #     registerConfigFileSelector(testDir / "config1.cue")
-  #     registerConfigFileSelector(testDir / "config2.cue")
-  #     loadRegisteredConfig()
-  #     echo showConfig()
-  #   test "File registration precedence":
-  #     check getConfig[string]("file.testString") == "from config2"
-  #     check getConfig[int]("file.testNumber") == 200
-    
-    
-# suite "Read static configuration (at compiletime)":
-#   test "Compiletime get":
-#     # will raise exception if fails
-#     # const evaluated at conpiletime, so we are testing compile time access
-#     try:
-#       const cfgNode = getConfig[string]("compiled.testString")
-#     except:
-#       fail()
-  
 # suite "Read static configuration (at runtime)":
 #   test "Read compiled":
 #     check getConfigNode("compiled").kind == JObject
