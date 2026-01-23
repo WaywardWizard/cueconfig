@@ -5,15 +5,15 @@
 
 import
   std/[
-    json, sequtils, strutils, strformat, syncio, envvars, paths, times, algorithm,
+    json, sequtils, strutils, strformat, envvars, paths, times, algorithm,
     hashes, pegs
   ]
-when nimvm:
-  import system/nimscript
+# when nimvm:
+#   import system/nimscript
 # when nimvm:
 #   import std/[staticos]
 when not defined(js):
-  import std/[os, osproc]
+  import std/[os, osproc,syncio]
 import util
 
 type
@@ -55,6 +55,7 @@ type
 proc `$`*(s:SerializedJsonSource): string =
   ## String representation of a SerializedJsonSource
   &"SerializedJsonSource(kind={s.kind},path={s.path},prefix={s.prefix},caseInsensitive={s.caseInsensitive})"
+  
 proc initFileSelector*(
     searchspace: Path, peg: string, useJsonFallback = true
 ): FileSelector =
@@ -71,6 +72,11 @@ proc initFileSelector*(path: Path, useJsonFallback = true): FileSelector =
   ## Initialize a FileSelector from a file path
   FileSelector(discriminator: fskPath, path: path, useJsonFallback: useJsonFallback)
 
+proc match*(x:FileSelector, path:string): bool = 
+  x.discriminator == fskPath and $x.path == path
+proc match*(x:FileSelector, path:string, peg: string): bool = 
+  x.discriminator == fskPeg and $x.searchspace == path and $x.peg == peg
+  
 proc hash*(x: FileSelector): Hash =
   ## Hash a FileSelector for caching, equivalence checking
   ## May fail if `initFileSelector`_ was not called for construction
@@ -85,14 +91,26 @@ proc hash*(x: FileSelector): Hash =
     h = h !& hash($x.peg)
   !$h
 
+proc hash*(x: JsonSource): Hash =
+  ## Checksumming allows us to determine changes of configuration, hash on json
+  ## field redundant so we implement a hash and dont use the default
+  doAssert x.jsonStr != "", "JSON not loaded"
+  var h:Hash = 0
+  case x.discriminator
+  of jsEnv: h= h !& x.prefix.hash !& hash(x.caseInsensitive.int)
+  else: h= h !& x.path.hash
+  h=h !& x.jsonStr.hash
+  return h
+
 proc interpolate(s: FileSelector): FileSelector =
   ## Return a FileSelector with environment variable and cwd interpolation
   ##
   ## Replaces `{VAR}` in the path or searchspace with the value of the environment.
-  ## Replace `{getCurrentDir()}` with the current working directory.
+  ## Replace `{getContextDir()}` with the current working directory at runtime
+  ## and the project directory at compiletime.
   result = s # copy
   var pathStr: string
-  var cwd = util.getCurrentDir()
+  var cxd = util.getContextDir()
 
   # cwd
   case s.discriminator
@@ -100,7 +118,7 @@ proc interpolate(s: FileSelector): FileSelector =
     pathStr = $s.path
   of fskPeg:
     pathStr = $s.searchspace
-  pathStr = pathStr.replace("{getCurrentDir()}", cwd)
+  pathStr = pathStr.replace("{getContextDir()}", cxd)
 
   # env
   let matcher = peg"\{@@\}"
@@ -215,8 +233,14 @@ proc cmp(a,b:SortKey): int =
   elif a.mtime != b.mtime: cmp(a.mtime, b.mtime)   # old to new
   else: -cmp($a.path, $b.path)                      # reverse alphabetical
 
-proc cmpFiles*(a, b: tuple[key:string,val:JsonSource]): int =
+proc cmpFiles*(a, b: tuple[key:Hash,val:JsonSource]): int =
   ## Comparator for JsonSource of file type, defining precedence order
+  ## 
+  ## # Precedence
+  ## Most precedent decided as follows
+  ## - Deeper in file hierarchy
+  ## - Newer modification time
+  ## - Lexical sort
   if a.val.discriminator != b.val.discriminator:
     raise ValueError.newException("JsonSource kinds do not match for comparison")
   if a.val.discriminator in [jsEnv]:
@@ -324,45 +348,52 @@ proc pretty*(x: JsonSource, indent: int = 2): seq[string] =
 
 proc mergeIn(dest, src: JsonNode): void # forward declaration
 proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode] {.raises: OSError.} =
-  ## Load the content of a JsonSource as a JsonString.
+  ## Read json, located relative to current context directory, and parse
   ##
   ## Cue to json fallback implemented at higher level in stack
   ## Raise OSError for missing sops binary or missing cue binary and no fallback
-  case x.discriminator
-  of jsJson, jsCue, jsSops:
-    when defined(js):
+  ## 
+  ## Relative paths are anchored at the context directory: the project dir at
+  ## compiletime and the workingdirectory at runtime.
+  when defined(js):
+    if x.discriminator in [jsJson, jsCue, jsSops]:
       ValueError.newException("File access not supported on JS backend")
-  else:
-    discard
-
   var jsonStr: string
   var json: JsonNode
+  
+  proc pathResolve(path:Path):string =
+    ## resolve relative paths rel context dir, return absolute ones
+    if path.isAbsolute: $path
+    else: $(util.getContextDir() / path)
 
   # extract json string
   case x.discriminator
   of jsJson:
+    var absPath = pathResolve(x.path)
     when nimvm:
-      jsonStr = staticRead($x.path)
+      jsonStr = staticRead(absPath)
     else:
-      jsonStr = readFile($x.path)
+      jsonStr = readFile(absPath)
   of jsCue:
+    var absPath = pathResolve(x.path)
     var cmd: tuple[output: string, exitCode: int]
     when nimvm:
-      cmd = gorgeEx(&"cue export {x.path}")
+      cmd = gorgeEx(&"cue export {absPath}")
     else:
-      cmd = execCmdEx(&"cue export {x.path}")
+      cmd = execCmdEx(&"cue export {absPath}")
     if cmd.exitCode != 0:
-      raise newException(IOError, &"Cue export error for file {x.path};\n{cmd.output}")
+      raise newException(IOError, &"Cue export error for file {absPath};\n{cmd.output}")
     jsonStr = cmd.output
   of jsSops:
+    var absPath = pathResolve(x.path)
     var cmd: tuple[output: string, exitCode: int]
     when nimvm:
-      cmd = gorgeEx(&"sops decrypt --output-type json {x.path}")
+      cmd = gorgeEx(&"sops decrypt --output-type json {absPath}")
     else:
-      cmd = execCmdEx(&"sops decrypt --output-type json {x.path}")
+      cmd = execCmdEx(&"sops decrypt --output-type json {absPath}")
     if cmd.exitCode != 0:
       raise
-        newException(IOError, &"Sops decrypt error for file {x.path};\n{cmd.output}")
+        newException(IOError, &"Sops decrypt error for file {absPath};\n{cmd.output}")
     jsonStr = cmd.output
   of jsEnv: # json string plus object
     var rawEnv: seq[string]
