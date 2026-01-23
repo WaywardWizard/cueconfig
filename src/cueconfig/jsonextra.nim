@@ -214,11 +214,14 @@ proc depth(x:JsonSource): int =
     raise ValueError.newException("No depth for env JsonSources")
 proc mtime(x:JsonSource): Time =
   ## Last modification time of JsonSource
-  case x.discriminator
-  of jsJson, jsCue, jsSops:
-    result = getLastModificationTime($x.path)
-  of jsEnv:
-    raise ValueError.newException("No mtime for env JsonSources")
+  when defined(js):
+    return 0.fromUnix()
+  else:
+    case x.discriminator
+    of jsJson, jsCue, jsSops:
+      result = getLastModificationTime($x.path)
+    of jsEnv:
+      raise ValueError.newException("No mtime for env JsonSources")
     
 type SortKey = tuple[path: string, depth: int, mtime: Time]
 proc sortKey(x: JsonSource): SortKey =
@@ -267,37 +270,37 @@ iterator items*(s: FileSelector, reverse = false): Path =
   ##    - Newest mtime, unless tied, then
   ##    - Lexical order of relative pathe
   when defined(js):
-    ValueError.newException("File access not supported on JS backend")
-    
-  case s.discriminator
-  of fskPath:
-    var extant: bool = extant(s.path)
-    if extant:
-      yield s.path
-  of fskPeg:
-    var items: seq[SortKey] = @[]
-    # todo may need a nimvm implementation
-    var searchspace =
-      if $s.searchspace == "":
-        util.getCurrentDir().Path
+    raise CodepathDefect.newException("File access not supported on JS backend")
+  else:
+    case s.discriminator
+    of fskPath:
+      var extant: bool = extant(s.path)
+      if extant:
+        yield s.path
+    of fskPeg:
+      var items: seq[SortKey] = @[]
+      # todo may need a nimvm implementation
+      var searchspace =
+        if $s.searchspace == "":
+          util.getCurrentDir().Path
+        else:
+          s.searchspace
+      var item: Path
+      for itemx in walkDirRec($searchspace, relative = true):
+        item = searchspace / itemx
+        if contains($item, s.peg):
+          items.add(
+            ($item, split($(item.parentDir), '/').len, getLastModificationTime($item))
+          )
+  
+      if reverse:
+        items.sort(cmp)
       else:
-        s.searchspace
-    var item: Path
-    for itemx in walkDirRec($searchspace, relative = true):
-      item = searchspace / itemx
-      if contains($item, s.peg):
-        items.add(
-          ($item, split($(item.parentDir), '/').len, getLastModificationTime($item))
-        )
-
-    if reverse:
-      items.sort(cmp)
-    else:
-      items.sort(cmp, SortOrder.Descending)
-      
-    for itemx in items:
-      yield itemx.path.Path
-
+        items.sort(cmp, SortOrder.Descending)
+        
+      for itemx in items:
+        yield itemx.path.Path
+  
 iterator interpolatedItems*(s: FileSelector, reverse = false): Path =
   for i in s.interpolate().items(reverse):
     yield i
@@ -357,83 +360,84 @@ proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode] {.raises: OSErr
   ## compiletime and the workingdirectory at runtime.
   when defined(js):
     if x.discriminator in [jsJson, jsCue, jsSops]:
-      ValueError.newException("File access not supported on JS backend")
-  var jsonStr: string
-  var json: JsonNode
+      raise ValueError.newException("File access not supported on JS backend")
+  else:
+    var jsonStr: string
+    var json: JsonNode
+    
+    proc pathResolve(path:Path):string =
+      ## resolve relative paths rel context dir, return absolute ones
+      if path.isAbsolute: $path
+      else: $(util.getContextDir() / path)
   
-  proc pathResolve(path:Path):string =
-    ## resolve relative paths rel context dir, return absolute ones
-    if path.isAbsolute: $path
-    else: $(util.getContextDir() / path)
-
-  # extract json string
-  case x.discriminator
-  of jsJson:
-    var absPath = pathResolve(x.path)
-    when nimvm:
-      jsonStr = staticRead(absPath)
-    else:
-      jsonStr = readFile(absPath)
-  of jsCue:
-    var absPath = pathResolve(x.path)
-    var cmd: tuple[output: string, exitCode: int]
-    when nimvm:
-      cmd = gorgeEx(&"cue export {absPath}")
-    else:
-      cmd = execCmdEx(&"cue export {absPath}")
-    if cmd.exitCode != 0:
-      raise newException(IOError, &"Cue export error for file {absPath};\n{cmd.output}")
-    jsonStr = cmd.output
-  of jsSops:
-    var absPath = pathResolve(x.path)
-    var cmd: tuple[output: string, exitCode: int]
-    when nimvm:
-      cmd = gorgeEx(&"sops decrypt --output-type json {absPath}")
-    else:
-      cmd = execCmdEx(&"sops decrypt --output-type json {absPath}")
-    if cmd.exitCode != 0:
-      raise
-        newException(IOError, &"Sops decrypt error for file {absPath};\n{cmd.output}")
-    jsonStr = cmd.output
-  of jsEnv: # json string plus object
-    var rawEnv: seq[string]
-    json = newJObject()
-    for k, v in envPairs():
-      let kprime =
-        if x.caseInsensitive:
-          k.toLowerAscii()
-        else:
-          k
-      let xprefix =
-        if x.caseInsensitive:
-          x.prefix.toLowerAscii()
-        else:
-          x.prefix
-      if kprime.startsWith(xprefix):
-        let key = k[xprefix.len ..^ 1]
-        rawEnv.add(key & "=" & v)
-        if kprime == xprefix: # top level json object merge ie "NIM_={...}"
-          var topLevelJson: JsonNode = v.parse()
-          json.mergeIn topLevelJson
-        else: # nested path
-          let path = key.split('_')
-          var parent = json
-          for part in path[0 ..^ 2]: # make path
-            if not parent.contains(part):
-              parent[part] = newJObject()
-            parent = parent[part]
-          parent[path[^1]] = v.parse() # insert
-    jsonStr = json.pretty
-
-  # parse string
-  if x.discriminator in [jsJson, jsCue, jsSops]:
-    try:
-      json = parseJson(jsonStr)
-    except JsonParsingError as e:
-      raise newException(ValueError, &"JSON parsing error for file {x.path};\n{e.msg}")
-
-  (jsonStr, json)
-
+    # extract json string
+    case x.discriminator
+    of jsJson:
+      var absPath = pathResolve(x.path)
+      when nimvm:
+        jsonStr = staticRead(absPath)
+      else:
+        jsonStr = readFile(absPath)
+    of jsCue:
+      var absPath = pathResolve(x.path)
+      var cmd: tuple[output: string, exitCode: int]
+      when nimvm:
+        cmd = gorgeEx(&"cue export {absPath}")
+      else:
+        cmd = execCmdEx(&"cue export {absPath}")
+      if cmd.exitCode != 0:
+        raise newException(IOError, &"Cue export error for file {absPath};\n{cmd.output}")
+      jsonStr = cmd.output
+    of jsSops:
+      var absPath = pathResolve(x.path)
+      var cmd: tuple[output: string, exitCode: int]
+      when nimvm:
+        cmd = gorgeEx(&"sops decrypt --output-type json {absPath}")
+      else:
+        cmd = execCmdEx(&"sops decrypt --output-type json {absPath}")
+      if cmd.exitCode != 0:
+        raise
+          newException(IOError, &"Sops decrypt error for file {absPath};\n{cmd.output}")
+      jsonStr = cmd.output
+    of jsEnv: # json string plus object
+      var rawEnv: seq[string]
+      json = newJObject()
+      for k, v in envPairs():
+        let kprime =
+          if x.caseInsensitive:
+            k.toLowerAscii()
+          else:
+            k
+        let xprefix =
+          if x.caseInsensitive:
+            x.prefix.toLowerAscii()
+          else:
+            x.prefix
+        if kprime.startsWith(xprefix):
+          let key = k[xprefix.len ..^ 1]
+          rawEnv.add(key & "=" & v)
+          if kprime == xprefix: # top level json object merge ie "NIM_={...}"
+            var topLevelJson: JsonNode = v.parse()
+            json.mergeIn topLevelJson
+          else: # nested path
+            let path = key.split('_')
+            var parent = json
+            for part in path[0 ..^ 2]: # make path
+              if not parent.contains(part):
+                parent[part] = newJObject()
+              parent = parent[part]
+            parent[path[^1]] = v.parse() # insert
+      jsonStr = json.pretty
+  
+    # parse string
+    if x.discriminator in [jsJson, jsCue, jsSops]:
+      try:
+        json = parseJson(jsonStr)
+      except JsonParsingError as e:
+        raise newException(ValueError, &"JSON parsing error for file {x.path};\n{e.msg}")
+  
+    (jsonStr, json)
+  
 proc reload*(x: var JsonSource): void =
   ## Reload the content of a JsonSource
   (x.jsonStr, x.json) = x.load()
