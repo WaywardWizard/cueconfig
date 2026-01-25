@@ -2,9 +2,9 @@
 ## Licensed under the MIT license
 
 # Package
-version       = "2.1.0"
+version       = "2.2.0"
 author        = "Ben Tomlin"
-description   = "Cue configuration with JSON fallback for Nim projects"
+description   = "Cue, sops, json, env typesafe compile/runtime configuration library"
 license       = "MIT"
 srcDir        = "src"
 
