@@ -1,36 +1,106 @@
 # CueConfig
-Cue configuration with JSON fallback for Nim projects.
+Cueconfig allows sourcing and accessing configuration at compiletime or runtime from environment variables, SOPs, CUE and JSON files. These are referred to as JsonSources. JsonSources are merged into a single configuration object, from which typed values may be retrieved. At compiletime configuration may be used, and at runtime. Js and C backends are supported with the caveat that the JS backend has no filesystem access at runtime (but we have fs access at compiletime). 
 
-## Description
-`cueconfig` is a Nim library that simplifies configuration management by leveraging [CUE](https://cuelang.org/) (Configure Unify Execute). It allows you to define your configuration in CUE, providing powerful validation and schema definition capabilities. It also supports a robust fallback mechanism to JSON and overrides via environment variables.
+You may also compile in the configuration sourced at runtime, thus configuring your binary, and the override the compiled configurations at will later with any JsonSource.
 
-## Purpose
-Enable DRY, deterministic, schema-able, validifiable and scriptable configuration for Nim. Exercise configuration from code for a quicker feedback loop.
+If you are using CUE or SOPS, you need those binaries available at compiletime or runtime or both depending on when you use them.
+*   [**CUE**](https://cuelang.org/docs/install/)
+*   [**SOPS**](https://getsops.io)
 
-## Features
-*   **CUE Integration**: Support CUE configuration files.
-*   **JSON Fallback**: Automatically falls back to `.json` files if `.cue` files are missing or CUE is not installed.
-*   **Hierarchical Configuration**: Merges configuration from multiple sources with a defined precedence order. ENV > Working Dir > Binary Dir > Compile-time.
-*   **Compile time access** Access your configuration at compile time or runtime
-*   **Compile in config**: Store your config in your compiled binary
-*   **Overrides**: Runtime overrides of compiled configuration with environment variables, cue or json files
-*   **Live Reloading**: Supports reloading configuration at runtime (trigger with reload())
-*   **Type Safety**: Provides a generic `getConfig[T]` procedure to retrieve typed configuration values.
-*   **JS Backend Support**: Use compiled in config in JS backend and additionally environment variable overrides in Node.js. Filesystem access limitations mean runtime configuration file use is not supported.
-*   
-
-## Installation
-Then, install the `cueconfig` package using Nimble:
+# Quick Start
+## Install
 ```bash
 nimble install cueconfig
 ```
+## Use
+Register your configuration source(s) at compiletime (in a static context)
+```nim
+import cueconfig, std/envvars
+var
+  keypath = "/path/to/your/age/key.txt"
+  sopsFilePath = "/path/to/your/encrypted/config.sops.(json|yaml)"
+  cueFilePath = "/path/to/your/config.cue"
+  jsonFilePath = "/path/to/your/config.json"
+  cue2File = "/path/to/your/other/config.cue"
+  cue3File = "/path/to/your/third/config.cue"
+static:
+  putEnv("SOPS_AGE_KEY_FILE",keypath) # your sops key 
+  register(sopsFilePath) # your sops encrypted json file, must be a .sops.json
+  register(cueFilePath)  
+  register(jsonFilePath)
+```
+Then access your configuration at compiletime. If your requested key is not found an exception is raised. After registering a JsonSource its contents are immediately available.
+```nim
+static:
+  let dbHost: string = getConfig[string]("backend.db.host")
+  let dbPort: int = getConfig[int]("backend.db.port")  
+  let routes[JsonNode] = getConfig[JsonNode]("frontend.spa.routes")
+const 
+  jwtRefreshPeriod = getConfig[int]("frontend.jwt.refresh.period")
+  jwtAccessPeriod = getConfig[int]("frontend.jwt.access.period")
+````
+To configure your binary you can persist all registrations made in a static context prior to calling `commit()`. `commit()` will serialize the registered config, store it in the binary with a const, then deserialize at runtime. You must call commit in a runtime context. If you try to commit SOPS JsonSources an exception will be raised. This is intentionally disallowed as secret material should not be compiled into binaries.
+```nim
+static:
+  register(cueFilePath)  
+  register(jsonFilePath)
+  commit() # store the registered config in the binary
+  register(cue2FilePath) # you can still register more sources at runtime
+```  
+Now contents of `cueFilePath` and `jsonFilePath` are accessible with `getConfig` at runtime. You can access contents of `cue2FilePath` at compiletime, but not runtime, since it was not registered prior to commit.
 
-## Prerequisites
-*   **CUE**: To use CUE files, you need to have `cue` installed and available in your system's PATH. This is not required if you will use pure JSON config,
-    *   [Install CUE](https://cuelang.org/docs/install/)
+Dump your configuration at runtime for debugging.
+```nim
+inspect()
+```
+
+To load configuration at runtime;
+```nim
+register(cue3File)
+getConfig[int]("some.key.in.cue3file")
+```
+Say you want to load in a new set of files for configuration
+```nim
+var configs: seq[string]
+clear() # remove registrations and runtime config, but not compiled in config
+register(configs)
+getConfig[float]("some.float.key")
+```
+Or maybe you want to remove a particular registration
+```nim
+deregister(cue3File)
+```
+To source config from environment varibles, you need to register a prefix of environment variable names. All environment variables matching this prefix will be matched. The json keypath will be extracted from the environment variable name by removing the prefix and replacing `_` with `.`. The value of the env var may be a json value (string, number, object, array, boolean, null) and will be parsed as such.
+```nim
+putEnv("NIM_some_key","-0.32e-13")
+registerEnv("NIM_",caseSensitive=false) # sensitivity applies to prefix only
+let someKey: float = getConfig[float]("some.key")
+```
+You can commit your config sourced from env vars just like with files. If you want to just input json with an env var, set its value to an object
+```nim
+putEnv("NIM_","{\"key1\":\"value1\",\"key2\":2}") # top level merge
+putEnv("NIM_server_data","{\"key1\":\"value1\",\"key2\":2}") # nested merge
+````
+
+# Documentation
 
 
-## API
+# Why
+The benefits of CUE and SOPS are best heard from the horses mouth. For CUE, config can be typed and validated, it can be generated from other config, and boilerplate and repitition can be eliminated. Particularly you can change a value, and have other values change accordingly, because you can derive your configuration from principal configuration with logic.
+
+For SOPS, secret management is simplified, and the less friction there is to securing systems the more secured they will be. You need secret management if you are handling secrets. 
+
+Some advantages to separating config from your executable is you gain agility and can more rapidly test. You can centralize configuration and keep a single source of truth.
+
+Another point. Configuration is just a fundamental that needs to be done well once and with enough flexibility that you dont need to spend time bending around it. Get the basics right, dont build on the sand.
+
+# Alternatives
+- Just use getEnv. For any complex configuration, youll still need to populate your env vars, and youll need to write some code to source, parse and validate them. This repo provides that code for you.
+- Parse Json/Yaml/Toml/Ini with library. Then you have a JsonNode. You still need to do secrets, you lose the benefits of CUE, and you need to think about precedence and merging. You"ll reimplement this wheel.
+- Neither of the above provide compiletime configuration access without further work, and they dont provide compile in configuration.
+
+# Configuration Examples
+## CUE
 For a config
 ```cue
 frontend: {
@@ -56,9 +126,7 @@ backend: {
 }
 ```
 Access with
-*   `getConfig[T](key: string|openArray[string]|varargs[string]): T`: Retrieves a configuration value by key (dot notation|array/varargs of keys).
-*   `reload()`: Reloads the runtime configuration and environment variables. Useful for long-running applications or testing.
-*   `showConfig()`: Returns a string representation of the currently loaded configuration.
+*   `getConfig[T](key: string|varargs[string]): T`: Retrieves a configuration value by key (dot notation|array/varargs of keys).
 
 Valid key formats:
 *   Dot notation: `getConfig[int]("frontend.jwt.refresh.period")`
@@ -66,23 +134,14 @@ Valid key formats:
 *   Seq of strings: `getConfig[int](@["frontend", "jwt", "refresh", "period"])`
 *   Varargs strings: `getConfig[int]("frontend", "jwt", "refresh", "period")`
 
-## Precedence
-
-`cueconfig` loads configuration from the following sources, in order of precedence (highest to lowest):
-
-1.  **Environment Variables**: Variables starting with `NIM_`.
-2.  **Runtime (Working Directory)**: `config.cue` (or `config.json`) in the current working directory. Useful if you want to test your binary with various configs.
-3.  **Runtime (Binary Directory)**: `config.cue` (or `config.json`) in the directory where the executable is located.
-4.  **Compile-time**: `config.cue` (or `config.json`) in the project root directory at compile time.
-
 ## Environment Variables
 Environment variables can override any configuration value. The matching logic is as follows:
 
-1.  Prefix: `NIM_` (case-insensitive).
+1.  Prefix: `NIM_` (case-insensitive or sensitive).
 2.  Separator: `_` (underscore) denotes nested keys.
-3.  Case Sensitivity: The keys themselves are case-sensitive.
+3.  Case Sensitivity: The JSON keys themselves are case-sensitive.
 
-### Special Case: Top-Level JSON Object
+## Special Case: Top-Level JSON Object
 If you use secret management, a simple way of injecting your secrets to the
 config is to yield a json string containing all secrets and assign that to a
 single `nim_` environment variable. This json object will be merged into the
@@ -118,18 +177,5 @@ object: {
 }
 ```
 
-## JSON Fallback
-If `config.cue` is not found, `cueconfig` will look for `config.json`. This is useful for deployments where installing the CUE binary might not be desirable or possible.
-
-## License
+# License
 MIT
-
-## Tests
-`nimble test`
-
-## Cautions
-Be aware of what configuration in compiled into your binary. Particularly secret materials.
-
-## Development AI Usage
-AI has been used for dumb code completion, debugging and some documentation. The
-logic and architecture is handwritten.
