@@ -32,7 +32,7 @@ type
   ConfigRegistry = seq[FileSelector]
   SerializedConfig = tuple[env, file: seq[SerializedJsonSource]]
 
-## `dualVar`_ for accessibility at both compile and runtime, except independant
+## for accessibility at both compile and runtime, except independant
 ## these maintain a dual state, One for compiletime and one for runtime.
 dualVar(envRegistry, EnvRegistry) ## to init JsonSource
 dualVar configRegistry, ConfigRegistry ## selectors for files to init JsonSource

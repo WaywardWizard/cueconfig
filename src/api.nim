@@ -1,12 +1,12 @@
 ## Copyright (c) 2025 Ben Tomlin 
 ## Licensed under the MIT license
 ##  
-## .. importdoc:: cueconfig/cueconfig,cueconfig/jsonextra
+## .. importdoc:: cueconfig/config,cueconfig/jsonextra
 ## 
 ## This api is simplified for end users and wraps an alternative API with more 
 ## descriptive names and convenience overloads in `cueconfig/config module`_
 import std/[paths, pegs]
-import cueconfig/cueconfig
+import cueconfig/config
 export getConfig, reload
 
 template register*(path: string, fallback: bool = true) =

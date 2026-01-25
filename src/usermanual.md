@@ -1,7 +1,7 @@
 Copyright (c) 2025 Ben Tomlin 
 Licensed under the MIT license
 
-.. importdoc:: cueconfig/jsonextra, cueconfig/vmutil
+.. importdoc:: cueconfig/jsonextra, cueconfig/vmutil, api
 .. contents::
 # Introduction
 Load configuration from [cue](https://cuelang.org), json and [sops](https://github.com/getsops/sops) file(s) as well as environment variable(s). At compiletime or runtime. Save configuration loaded at compiletime into the binary for use at runtime.

@@ -48,10 +48,9 @@ task docgen, "Generate documentation":
   echo "Generating documentation..."
   var q: seq[string]
   exec &"rm -rf {DOCFOLDER}/*"
-  # --outdir is bugged, only works immediately before sub command...
   var result: tuple[output:string, exitCode:int]
-  echo "Processing md files..."
   
+  # --outdir is bugged, only works immediately before sub command...
   const cmd = "nim --colors:on --path:$projectDir {extraArgs} --outdir:{DOCFOLDER} {subcmd} {target}"
   
   # Accumulate md doc cmds
@@ -65,26 +64,22 @@ task docgen, "Generate documentation":
   const target = SRCFOLDER & "/*.nim"
   var extraArgsSet = collect:
     for ix in ["only","off"]:
-      &"--index:{ix} --project --docInternal"
+      &"--index:{ix} --project "
   for extraArgs in extraArgsSet:
     q.add fmt(cmd) 
     
   echo "Generating indices..."
   for theCmd in q.filterIt(it.contains("--index:only")):
     result = gorgeEx theCmd
+    echo result.output
     checkresult()
     
   echo "Generating html..."
   for theCmd in q.filterIt(not it.contains("--index:only")):
     result = gorgeEx theCmd
+    echo result.output
     checkresult()
     
-  #  echo "Documentation generation had some errors;"
-  #  # lines with "Error" in them
-  #  echo ""
-  #  echo result.output.splitLines().filterIt(it.contains "Error").join("\n")
-  #  quit(result.exitCode)
-
 task build, "Build the library":
   echo "Building library..."
   exec "nim c src/cueconfig.nim"
