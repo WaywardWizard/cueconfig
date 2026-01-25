@@ -177,5 +177,14 @@ object: {
 }
 ```
 
+# Software Engineering Services
+Inquiries for paid work welcome as im looking currently. These are some areas of experience
+* Reliability, Mechanical, Software Engineering
+* Design and architecture
+* Efficiency, optimization, continuous improvement.
+* Teaching
+* Languages
+* Astronomy, science
+
 # License
 MIT
