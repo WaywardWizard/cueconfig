@@ -83,8 +83,6 @@ task docgen, "Generate documentation":
   # need to have theindex.html for genearted links, and index.html for landing
   result = gorgeEx &"cp {DOCFOLDER}/theindex.html {DOCFOLDER}/index.html"
   checkResult()
-  #/result = gorgeEx &"ln -sr {DOCFOLDER}/{{,the}}index.html"
-  #/checkResult()
     
 task build, "Build the library":
   echo "Building library..."
