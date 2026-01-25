@@ -47,7 +47,7 @@ workflows: {
 						name: "Setup Nim"
 						uses: "jiro4989/setup-nim-action@v2"
 						with: {
-							"nim-version": "2.2"
+							"nim-version": "2.2.x"
 							"repo-token":  "${{ secrets.GITHUB_TOKEN }}"
 						}
 					}, // Set up Nim compiler
