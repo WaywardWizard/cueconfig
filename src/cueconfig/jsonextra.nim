@@ -169,7 +169,7 @@ proc initJsonSource*(path: Path, useJsonFallback = false): JsonSource =
   case discriminant # check path exists, fallback path if required
   of jsSops, jsJson:
     if not extant:
-      raise ConfigError.newException("File does not exist: " & $path)
+      raise ConfigError.newException("(Fallback)? file does not exist: " & $path)
     result.path = path
     result.discriminator = discriminant
   of jsCue:
@@ -197,12 +197,19 @@ proc initJsonSource*(path: Path, useJsonFallback = false): JsonSource =
 
   try: # load content
     (result.jsonStr, result.json) = result.load()
-  except IOError, OSError:
-    if discriminant == jsCue and useJsonFallback: # no cue binary
+  except CatchableError:
+    # fallback Where;
+    # no cue binary, cue file missing, but not where cue file malformed
+    let
+      isCueBinaryMissing = getCurrentException().msg.contains("Cue binary not found")
+      isCueFileMissing = getCurrentException().msg.contains("File missing")
+    let doFallback =
+      discriminant == jsCue and (isCueBinaryMissing or isCueFileMissing) and useJsonFallback
+    if doFallback:
       return initJsonSource(path.changeFileExt("json"))
     else:
-      echo $getCurrentException().msg
-      raise # no sops binary, caller to handle
+      # no sops/cue binary, or other, caller handles
+      raise
 
 proc initJsonSource*(envprefix: string, caseInsensitive = true): JsonSource =
   result = JsonSource(
@@ -413,8 +420,10 @@ proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode] {.raises: OSErr
     else:
       when not defined(js): # dirty hack
         cmd = execCmdEx(&"cue export {absPath}")
+    # binary exists, if missing, an exception will raise at the cmdEx() call
     if cmd.exitCode != 0:
-      raise
+      if cmd.output.contains("no such file"):
+        # this one can be handled with fallback
         raise newException(ConfigError, &"File missing")
       if cmd.output.contains("cue: command not found"):
         raise newException(OSError, "Cue binary not found")
@@ -428,7 +437,6 @@ proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode] {.raises: OSErr
     else:
       when not defined(js): # dirty hack to stop js backend runtime but allow nimvm
         cmd = execCmdEx(&"sops decrypt --output-type json {absPath}")
-        #echo &"SOPS {$cmd}"
       else:
         raise CodepathDefect.newException("File access not supported on JS backend")
     if cmd.exitCode != 0:
