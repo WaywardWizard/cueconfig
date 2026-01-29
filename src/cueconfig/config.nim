@@ -225,7 +225,6 @@ proc registerConfigFileSelector*(
     rxselectors: varargs[tuple[searchpath, peg: string]],
     useJsonFallback=false, require = true,
 ): void =
-  ## Convenience fskPeg registration automatically fallback to json
   for (searchpath, peg) in rxselectors:
     registerConfigFileSelector(initFileSelector(Path(searchpath), peg, useJsonFallback,require))
 

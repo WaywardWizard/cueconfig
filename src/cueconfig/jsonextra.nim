@@ -152,7 +152,7 @@ proc initJsonSource*(path: Path, useJsonFallback = false): JsonSource =
   ## `.*\.sops\.(ya?ml|json)` => jsSops
   ## `.*\.cue`               => jsCue
   ## `.*\.json`              => jsJson
-  let pathSplit = ($path).split(".")
+  let pathSplit = ($path.extractFilename).split(".")
   var discriminant: JsonSourceKind
   if pathSplit.len >= 2 and pathSplit[^2..^1].mapit(it.toLowerAscii()).contains("sops"):
     discriminant = jsSops
