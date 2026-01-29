@@ -72,9 +72,9 @@ when not defined(js):
       check info.contains("fallback.json")
   
     test "Reload updates config":
-      register("fallback.json")
+      register("fallback.json",require=false)
       check getconfig[string]("fileExtUsed") == "json"
       setCurrentDir sdir
       reload()
-      expect(ConfigError):
+      expect(ConfigError): # key missing 
         check getconfig[string]("fileExtUsed") == "json"

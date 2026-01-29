@@ -9,9 +9,9 @@ import std/[paths, pegs]
 import cueconfig/config
 export getConfig, reload, showConfig
 
-template register*(path: string, fallback: bool = true) =
+template register*(path: string,fallback: bool = false, require:bool = true) =
   ## Register a config file at path, with JSON fallback for unavailable cue files
-  registerConfigFileSelector(path, fallback)
+  registerConfigFileSelector(path, fallback, require)
 
 template deregister*(path: string) =
   ## Remove a registered config file at path
@@ -22,7 +22,7 @@ template register*(searchdir: string, peg: string, fallback: bool = false, requi
   ## 
   ## When *fallback*, json files will stand in for missing cue
   ## When *require*, at least one file must match the registration
-  registerConfigFileSelector((searchdir, peg, fallback))
+  registerConfigFileSelector((searchdir, peg), fallback, require)
 
 template deregister*(searchpath: string, peg: string) =
   ## Remove registered file matcher pattern
