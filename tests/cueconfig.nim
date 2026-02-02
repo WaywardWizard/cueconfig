@@ -389,6 +389,16 @@ when not defined(js): # filesystem access required
     test "Load cue file fallback to json":
       registerConfigFileSelector("only.json", true)
       check getConfig[string]("test") == "onlyjson"
+      
+  suite "Paths with ../":
+    setup:
+      setCurrentDir(ppath / "assets")
+    test "../ in relative path resolves":
+      registerConfigFileSelector("subdir/../conflictA.cue")
+      check getConfig[string]("conflict") == "A"
+    test "../ in absolute path resolves":
+      registerConfigFileSelector($(ppath / "/assets/subdir/../conflictB.json"))
+      check getConfig[string]("other") == "here"
 
 when (not defined(js) or NODE):
   suite "Env parsing":

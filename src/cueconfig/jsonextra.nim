@@ -1,16 +1,17 @@
 ## Copyright (c) 2025 Ben Tomlin
 ## Licensed under the MIT license
 ##
-## Logic for loading json from sops, cue and json files, serializing iterating 
+## Logic for loading json from sops, cue and json files, serializing iterating
 ## and accessing. Parsing env vars to json.
 import
-  std/[
-    json, sequtils, strutils, strformat, envvars, paths, times, algorithm,
-    hashes, pegs
-  ]
+  std/
+    [
+      json, sequtils, strutils, strformat, envvars, paths, times, algorithm, hashes,
+      pegs,
+    ]
 when not defined(js):
-  import std/[os, osproc,syncio]
-  
+  import std/[os, osproc, syncio]
+
 import util, exceptions
 
 type
@@ -50,15 +51,16 @@ type
   SerializedJsonSource* =
     tuple[kind, path, prefix, jsonStr: string, caseInsensitive: bool]
 
-proc `$`*(s:SerializedJsonSource): string =
+proc `$`*(s: SerializedJsonSource): string =
   ## String representation of a SerializedJsonSource
   &"SerializedJsonSource(kind={s.kind},path={s.path},prefix={s.prefix},caseInsensitive={s.caseInsensitive})"
-  
+
 proc initFileSelector*(
-    searchspace: Path, peg: string, useJsonFallback=false, require = true
+    searchspace: Path, peg: string, useJsonFallback = false, require = true
 ): FileSelector =
-  ## Initialize a FileSelector from a searchspace path and peg 
-  if ($peg).len == 0: raise ValueError.newException("Peg cannot be empty")
+  ## Initialize a FileSelector from a searchspace path and peg
+  if ($peg).len == 0:
+    raise ValueError.newException("Peg cannot be empty")
   FileSelector(
     discriminator: fskPeg,
     searchspace: searchspace,
@@ -67,16 +69,23 @@ proc initFileSelector*(
     require: require,
   )
 
-proc initFileSelector*(path: Path, useJsonFallback=false; require = true): FileSelector =
+proc initFileSelector*(
+    path: Path, useJsonFallback = false, require = true
+): FileSelector =
   ## Initialize a FileSelector from a file path
-  FileSelector(discriminator: fskPath, path: path,
-    useJsonFallback: useJsonFallback,require: require)
+  FileSelector(
+    discriminator: fskPath,
+    path: path,
+    useJsonFallback: useJsonFallback,
+    require: require,
+  )
 
-proc match*(x:FileSelector, path:string): bool = 
+proc match*(x: FileSelector, path: string): bool =
   x.discriminator == fskPath and $x.path == path
-proc match*(x:FileSelector, path:string, peg: string): bool = 
+
+proc match*(x: FileSelector, path: string, peg: string): bool =
   x.discriminator == fskPeg and $x.searchspace == path and $x.peg == peg
-  
+
 proc hash*(x: FileSelector): Hash =
   ## Hash a FileSelector for caching, equivalence checking
   ## May fail if `initFileSelector`_ was not called for construction
@@ -96,11 +105,13 @@ proc hash*(x: JsonSource): Hash =
   ## Checksumming allows us to determine changes of configuration, hash on json
   ## field redundant so we implement a hash and dont use the default
   doAssert x.jsonStr != "", "JSON not loaded"
-  var h:Hash = 0
+  var h: Hash = 0
   case x.discriminator
-  of jsEnv: h= h !& x.prefix.hash !& hash(x.caseInsensitive.int)
-  else: h= h !& x.path.hash
-  h=h !& x.jsonStr.hash
+  of jsEnv:
+    h = h !& x.prefix.hash !& hash(x.caseInsensitive.int)
+  else:
+    h = h !& x.path.hash
+  h = h !& x.jsonStr.hash
   return h
 
 proc interpolate(s: FileSelector): FileSelector =
@@ -140,13 +151,13 @@ proc interpolate(s: FileSelector): FileSelector =
 proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode]
 proc initJsonSource*(path: Path, useJsonFallback = false): JsonSource =
   ## Initialize a JsonFile from a file path
-  ## 
-  ## For a cue file fallback to json of same name with '\.cue$" changed to '.json' 
+  ##
+  ## For a cue file fallback to json of same name with '\.cue$" changed to '.json'
   ## if cue binary missing or file missing.
   ##
   ## Where cue/sops binaries are missing or the path does not exist and a fallback
   ## is not possible raise an exception.
-  ## 
+  ##
   ## Also load the file content into memory in json format
   ##
   ## `.*\.sops\.(ya?ml|json)` => jsSops
@@ -154,7 +165,9 @@ proc initJsonSource*(path: Path, useJsonFallback = false): JsonSource =
   ## `.*\.json`              => jsJson
   let pathSplit = ($path.extractFilename).split(".")
   var discriminant: JsonSourceKind
-  if pathSplit.len >= 2 and pathSplit[^2..^1].mapit(it.toLowerAscii()).contains("sops"):
+  if pathSplit.len >= 2 and pathSplit[^2 ..^ 1].mapit(it.toLowerAscii()).contains(
+    "sops"
+  ):
     discriminant = jsSops
   else:
     case pathSplit[^1].toLowerAscii()
@@ -204,7 +217,8 @@ proc initJsonSource*(path: Path, useJsonFallback = false): JsonSource =
       isCueBinaryMissing = getCurrentException().msg.contains("Cue binary not found")
       isCueFileMissing = getCurrentException().msg.contains("File missing")
     let doFallback =
-      discriminant == jsCue and (isCueBinaryMissing or isCueFileMissing) and useJsonFallback
+      discriminant == jsCue and (isCueBinaryMissing or isCueFileMissing) and
+      useJsonFallback
     if doFallback:
       return initJsonSource(path.changeFileExt("json"))
     else:
@@ -217,37 +231,43 @@ proc initJsonSource*(envprefix: string, caseInsensitive = true): JsonSource =
   )
   (result.jsonStr, result.json) = result.load()
 
-proc depth(x:JsonSource): int =
+proc depth(x: JsonSource): int =
   ## Depth of JsonSource in file hierarchy
   case x.discriminator
   of jsJson, jsCue, jsSops:
     result = split($x.path.parentDir, '/').len
   of jsEnv:
     raise CodepathDefect.newException("No depth for env JsonSources")
-proc mtime(x:JsonSource): Time =
+
+proc mtime(x: JsonSource): Time =
   ## Last modification time of JsonSource, supported at compiletime
   case x.discriminator
   of jsJson, jsCue, jsSops:
     result = util.getLastModificationTime($x.path) # os @run, util @compile
   of jsEnv:
     raise CodepathDefect.newException("No mtime for env JsonSources")
-    
+
 type SortKey = tuple[path: string, depth: int, mtime: Time]
 proc sortKey(x: JsonSource): SortKey =
   ## Sort key for JsonSource
   case x.discriminator
-  of jsJson, jsCue, jsSops: result = ( $x.path, x.depth(), x.mtime() )
-  of jsEnv: raise CodepathDefect.newException("No sortKey for env JsonSources")
-    
-proc cmp(a,b:SortKey): int =
-  ## Comparator producing least to most precedent order
-  if a.depth != b.depth: cmp(a.depth, b.depth)      # shallow to deep
-  elif a.mtime != b.mtime: cmp(a.mtime, b.mtime)   # old to new
-  else: -cmp($a.path, $b.path)                      # reverse alphabetical
+  of jsJson, jsCue, jsSops:
+    result = ($x.path, x.depth(), x.mtime())
+  of jsEnv:
+    raise CodepathDefect.newException("No sortKey for env JsonSources")
 
-proc cmpFiles*(a, b: tuple[key:Hash,val:JsonSource]): int =
+proc cmp(a, b: SortKey): int =
+  ## Comparator producing least to most precedent order
+  if a.depth != b.depth:
+    cmp(a.depth, b.depth) # shallow to deep
+  elif a.mtime != b.mtime:
+    cmp(a.mtime, b.mtime) # old to new
+  else:
+    -cmp($a.path, $b.path) # reverse alphabetical
+
+proc cmpFiles*(a, b: tuple[key: Hash, val: JsonSource]): int =
   ## Comparator for JsonSource of file type, defining precedence order
-  ## 
+  ##
   ## # File Precedence
   ## Most precedent decided as follows
   ## - Deeper in file hierarchy
@@ -258,11 +278,11 @@ proc cmpFiles*(a, b: tuple[key:Hash,val:JsonSource]): int =
   if a.val.discriminator in [jsEnv]:
     raise CodepathDefect.newException("No sorting for env JsonSources")
   cmp(a.val.sortKey(), b.val.sortKey())
-  
+
 iterator items*(s: FileSelector, reverse = false): Path =
   ## Iterate over *extant* paths of a FileSelector. Low to high precedence.
   ## Dont follow symlinks. Paths returned are relative.
-  ## 
+  ##
   ## Precedence as per [File Precedence]
   ##
   ## **fskPath** *abc*
@@ -278,10 +298,10 @@ iterator items*(s: FileSelector, reverse = false): Path =
   ##    - Deepest in file hierachy, unless tied, then
   ##    - Newest mtime, unless tied, then
   ##    - Lexical order of relative pathe
-  ## 
+  ##
   ## Supports the nimvm for all compilation targets, and the c runtime
 
-  template logicBlock() = 
+  template logicBlock() =
     case s.discriminator
     of fskPath:
       var extant: bool = extant(s.path)
