@@ -316,31 +316,36 @@ iterator items*(s: FileSelector, reverse = false): Path =
         else:
           s.searchspace
       var item: Path
-      
+
       # Loop all files in dir and extract matches
       template process(itemx: untyped) =
         item = searchspace / $itemx
         if contains($item, s.peg):
           items.add(
-            ($item, split($(item.parentDir), '/').len, util.getLastModificationTime($item))
+            (
+              $item,
+              split($(item.parentDir), '/').len,
+              util.getLastModificationTime($item),
+            )
           )
-      when nimvm: 
+
+      when nimvm:
         for itemx in staticWalkDirRec(searchspace, relative = true):
           process(itemx)
-      else: 
+      else:
         when not defined(js):
           for itemx in walkDirRec($searchspace, relative = true):
             process(itemx)
-  
+
       # put in precedence order
       if reverse:
         items.sort(cmp) # low to high
       else:
         items.sort(cmp, SortOrder.Descending)
-        
+
       for itemx in items:
         yield itemx.path.Path
-        
+
   when nimvm: # support nimvm with any compilation target
     logicBlock()
   else: # bail if targeting js and not the nimvm
@@ -348,8 +353,7 @@ iterator items*(s: FileSelector, reverse = false): Path =
       raise CodepathDefect.newException("File access not supported on JS backend")
     else: # support non js runtime
       logicBlock()
-        
-  
+
 iterator interpolatedItems*(s: FileSelector, reverse = false): Path =
   for i in s.interpolate().items(reverse):
     yield i
@@ -404,25 +408,28 @@ proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode] {.raises: OSErr
   ##
   ## Cue to json fallback implemented at higher level in stack
   ## Raise OSError for missing sops binary or missing cue binary and no fallback
-  ## 
+  ##
   ## Relative paths are anchored at the context directory: the project dir at
   ## compiletime and the workingdirectory at runtime.
-  ## 
+  ##
   ## Support nimvm on any target and c backend
-  when nimvm: discard 
+  when nimvm:
+    discard
   else:
     when defined(js):
       if x.discriminator in [jsJson, jsCue, jsSops]:
         raise ConfigError.newException("File access not supported on JS backend")
-        
+
   # logic for nimvm/ non js backends follows
   var jsonStr: string
   var json: JsonNode
-  
-  proc pathResolve(path:Path):string =
+
+  proc pathResolve(path: Path): string =
     ## resolve relative paths rel context dir, return absolute ones
-    if util.isAbsolute(path): $path
-    else: $(getContextDir() / path)
+    if util.isAbsolute(path):
+      $path
+    else:
+      $(getContextDir() / path)
 
   # extract json string
   case x.discriminator
@@ -576,7 +583,7 @@ proc parse(x: string): JsonNode =
   ##
   ## Numbers may contains underscores for readability which are ignored
   ## Objects must be valid json
-  ## 
+  ##
   ## Used when parsing env var values to json nodes
   var s = x.strip()
   var sLower = s.toLowerAscii()
