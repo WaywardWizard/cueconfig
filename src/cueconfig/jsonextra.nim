@@ -402,7 +402,7 @@ proc parse(x: string): JsonNode # forward declaration
 proc pretty*(x: JsonSource, indent: int = 2): seq[string] =
   x.json.pretty(indent).splitLines()
 
-proc mergeIn(dest, src: JsonNode): void # forward declaration
+proc mergeIn*(to, donor: JsonNode): void # forward declaration
 proc load(x: JsonSource): tuple[jsonStr: string, json: JsonNode] {.raises: OSError.} =
   ## Read json, located relative to current context directory, and parse
   ##
@@ -552,23 +552,33 @@ iterator cartesianProduct[T: Catenatable](a, b: openArray[T]): T =
   ):
     yield x
 
-proc mergeIn(dest, src: JsonNode): void =
-  ## Merge src into dest, overwriting any existing keys in dest
-  ## When an object value is found in src, and the corresponding key in dest is
+proc mergeImpl(to, donor: JsonNode): void =
+  ## Merge donor into `to`, overwriting any existing keys in `to`
+  ##
+  ## When an object value is found in donor, and the corresponding key in `to` is
   ## also an object, the merge is done recursively retaining exclusive keys in
-  ## dest, clobbering common keys with those from src and adding exclusive keys
-  ## from src.
-  ## When an array value is found in src, any corresponding key in dest is
-  ## overwritten with the array from src.
-  for k, v in src:
+  ## `to`, clobbering common keys with those from `donor` and adding exclusive keys
+  ## from `donor`.
+  ##
+  ## Vice versa for reverse.
+  ##
+  ## When an array value is found in `donor`, any corresponding key in `to` is
+  ## overwritten with the array from `donor`.
+  for k, v in donor:
     case v.kind
     of JObject:
-      if dest.contains(k) and dest[k].kind == JObject:
-        mergeIn(dest[k], v)
+      if to.contains(k) and to[k].kind == JObject:
+        mergeImpl(to[k], v)
       else:
-        dest[k] = v
+        to[k] = v
     else:
-      dest[k] = v
+      to[k] = v
+
+proc mergeIn*(to, donor: JsonNode): void =
+  mergeImpl(to, donor)
+
+proc mergeTo*(donor, to: JsonNode): void =
+  mergeImpl(to, donor)
 
 proc parse(x: string): JsonNode =
   ## Change string to JsonNode interpreting the following format;

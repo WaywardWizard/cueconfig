@@ -2,7 +2,7 @@
 ## Licensed under the MIT license
 
 # Package
-version       = "2.7.1"
+version       = "2.8.0"
 author        = "Ben Tomlin"
 description   = "Cue, sops, json, env typesafe compile/runtime configuration library"
 license       = "MIT"

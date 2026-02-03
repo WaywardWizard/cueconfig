@@ -546,14 +546,29 @@ proc reload*() =
   loadRegisteredConfig()
 
 proc getConfigNodeImpl(key: openarray[string]): JsonNode =
-  ## Get config JsonNode at path `key` (split on '.'), respecting precedence
+  ## Get config JsonNode at path `key` (split on '.'), for highest precedence
+  ## source. Where the node is a JObject, then create a new node and merge all
+  ## values (see `mergeIn`) across all sources into it respecting precedence.
   ##
   ## Raise an exception if the requested key is not present.
   var cfg: Config = getConfigLazy(update = true)
-  for label, jsrc in getConfigLazy(update = true).pairs(reverse = true):
+  # this is going to be modified, we dont want to modify originals
+  var resultObject: JsonNode = %*{}
+  
+  for label, jsrc in cfg.pairs(reverse = true):
     # high to low precedence
     if jsrc.contains(key): # differentiates jsnode{key}=null vs no key
+      if jsrc{key}.kind == JObject: # merge all config source contributions to single node
+        for label2, jsrc2 in cfg.pairs(): # low to high
+          if jsrc2.contains(key):
+            var contribution: JsonNode = jsrc2{key}
+            assert(contribution.kind == JObject,&"Object and non object value for key {key} in config sources")
+            resultObject.mergeIn(contribution)
+        return resultObject
+      # if value is terminal (!=JObject), return it
       return jsrc{key}
+      
+  # key not present in any source
   let sources: string = dualMGetConfigInstance().sources().join("\n\t")
   raise ConfigError.newException(&"Key '{key}' not found in sources;\n\t{sources}")
 
