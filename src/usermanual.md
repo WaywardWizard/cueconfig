@@ -37,6 +37,20 @@ You register string paths to files, or a search directory path and PEG pattern t
 
 These paths may be absolute or relative. Relative paths are relative to the context directory [getContextDir]. Briefly, this is the working directory at runtime, and the project directory at compiletime. Its also possible to have environment variables or the context directory interpolated into the paths.
 
+#### Context Directory
+Useful anchors for relative paths are;
+- Compiletime
+    - The directory of source file being compiled. (thisDir, currentSourcePath)
+    - The directory of project file being compiled. (getProjectDir)
+    - The directory the compiler was run from. (pwd)
+- Runtime
+    - The directory the binary was run from. (getCurrentDir())
+    - The directory of the binary. (getAppDir())
+
+The binary directory and the path to source file being compiled are static. The working directory of the compiler cannot be changed. Beware using compiletime paths at runtime.
+
+You can use these (unchanging) paths by making your path absolute. Otherwise relative paths are anchored at the context directory. This is the project directory at runtime or otherwise the pwd.
+
 #### PEGS
 PEGs not regexes are used to match patterns. Basic regexes will work as a peg also.
 
