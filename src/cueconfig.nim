@@ -7,7 +7,7 @@
 ## descriptive names and convenience overloads in `cueconfig/config module`_
 import std/[paths, pegs]
 import cueconfig/config
-export getConfig, reload, showConfig
+export getConfig, reload, showConfig, configHasKey
 
 template register*(path: string,fallback: bool = false, require:bool = true) =
   ## Register a config file at path, with JSON fallback for unavailable cue files
